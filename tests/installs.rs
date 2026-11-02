@@ -1283,11 +1283,23 @@ fn last_publication_rechecks_case_alias_and_native_name_collisions() {
             Ok(())
         });
         assert!(result.is_err(), "late {kind} collision was accepted");
-        assert!(!root.join("demo").exists());
-        assert!(
-            root.join(if kind == "case" { "DEMO" } else { "alias" })
-                .exists()
-        );
+        // On case-insensitive filesystems `demo` resolves to the injected DEMO.
+        // Check actual directory entries and type, rather than alias lookup.
+        let names: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(!names.iter().any(|name| name == "demo"));
+        let existing = root.join(if kind == "case" { "DEMO" } else { "alias" });
+        assert!(fs::symlink_metadata(&existing).unwrap().is_dir());
+        if kind == "native" {
+            assert_eq!(
+                fs::read(existing.join("SKILL.md")).unwrap(),
+                fs::read(f.path("source/SKILL.md")).unwrap()
+            );
+        } else {
+            assert_eq!(fs::read_dir(existing).unwrap().count(), 0);
+        }
     }
 }
 #[test]
