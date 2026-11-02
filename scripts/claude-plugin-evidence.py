@@ -33,10 +33,15 @@ def main():
         # HOME and CODEX_HOME retain their inherited values. Claude's documented
         # config-directory override isolates all native configuration writes.
         env = {key: value for key, value in os.environ.items()
-               if not any(part in key.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"))}
+               if not key.startswith("GIT_") and not any(part in key.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"))}
         env.update(CLAUDE_CONFIG_DIR=str(home / ".claude"),
                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
-                   DISABLE_AUTOUPDATER="1", DISABLE_TELEMETRY="1")
+                   DISABLE_AUTOUPDATER="1", DISABLE_TELEMETRY="1",
+                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+        # A fixture repository boundary prevents Skillrail's ancestor discovery
+        # from reaching the author's worktree while replaying native records.
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "init", "-q", str(project)],
+                       env=env, check=True, capture_output=True)
 
         def cli(*args):
             result = subprocess.run(["claude", *args], cwd=project, env=env,
@@ -65,6 +70,7 @@ def main():
         inventory = json.loads(result.stdout)
         selected = [o for o in inventory["occurrences"]
                     if o["origin"]["kind"] == "plugin" and o["origin"]["installation"]["status"] == "selected"]
+        assert len(inventory["occurrences"]) == 4, inventory
         assert len(selected) == 4, inventory
         assert {o["scope"] for o in selected} == {"user", "project", "local"}
         print("Native registry replay: four selected skill occurrences across user/project/local passed")

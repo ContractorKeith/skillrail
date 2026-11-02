@@ -185,7 +185,9 @@ retention. `python3 scripts/claude-plugin-evidence.py` reproduces the native
 schema probe (requires exactly Claude 2.1.309 and a built Skillrail binary).
 It sets only Claude's documented `CLAUDE_CONFIG_DIR` isolation override;
 HOME and CODEX_HOME are never reassigned. All native writes are under its
-small disposable fixture. Commands run there:
+small disposable fixture. It creates its own Git boundary, disables Git global/
+system configuration, and requires exactly four replay occurrences so ancestor
+content cannot enter the result. Commands run there:
 
 ```
 claude plugin marketplace add <fixture-local-marketplace> --json
