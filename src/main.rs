@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
+use std::io::Write;
 use std::path::PathBuf;
+
+mod output;
 
 #[derive(Parser)]
 #[command(version, about = "Local-first skill and MCP registry (M0 harness)")]
@@ -36,10 +39,21 @@ enum Commands {
 }
 
 fn main() -> std::process::ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) if !error.use_stderr() => {
+            return output::finish(output::stdout(&error.to_string()), false);
+        }
+        Err(error) => {
+            let _ = write!(std::io::stderr().lock(), "{error}");
+            return std::process::ExitCode::from(error.exit_code() as u8);
+        }
+    };
     if matches!(cli.command, Some(Commands::Version)) {
-        println!("skillrail {}", env!("CARGO_PKG_VERSION"));
-        return std::process::ExitCode::SUCCESS;
+        return output::finish(
+            output::stdout(&format!("skillrail {}\n", env!("CARGO_PKG_VERSION"))),
+            false,
+        );
     }
     let json = matches!(
         cli.command,
@@ -60,29 +74,18 @@ fn main() -> std::process::ExitCode {
                 let output = serde_json::to_string(&inventory).map_err(|_| {
                     skillrail::AppError::new("output_unavailable", "Cannot encode inventory.")
                 })?;
-                println!("{output}");
+                output::stdout(&format!("{output}\n"))?;
             } else {
-                println!("M0: discovery not implemented; 0 indexed items.");
-                println!("Home: {}", inventory.context.home.display());
-                println!("Project: {}", inventory.context.project.display());
-                println!("State: {}", inventory.context.state_dir.display());
-                println!("Last scan: {} (Unix ms)", inventory.scanned_at_unix_ms);
+                output::stdout(&format!(
+                    "M0: discovery not implemented; 0 indexed items.\nHome: {}\nProject: {}\nState: {}\nLast scan: {} (Unix ms)\n",
+                    output::human_path(&inventory.context.home),
+                    output::human_path(&inventory.context.project),
+                    output::human_path(&inventory.context.state_dir),
+                    inventory.scanned_at_unix_ms,
+                ))?;
             }
         }
         Ok(())
     })();
-    match result {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(error) => {
-            if json {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"schema_version": skillrail::SCHEMA_VERSION, "error": error})
-                );
-            } else {
-                eprintln!("{error}");
-            }
-            std::process::ExitCode::from(1)
-        }
-    }
+    output::finish(result, json)
 }

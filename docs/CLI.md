@@ -71,6 +71,8 @@ Array order is deterministic. There are no item IDs yet because there are no
 items. Clients should inspect schema version and diagnostic codes, rather than
 parse human messages. Plain-text list/scan shows context and scan time as well
 as the discovery limitation. The TUI displays the same scan's time and limitation.
+Human-readable paths escape control characters (including embedded newlines);
+JSON retains the original path values with normal JSON string escaping.
 
 ## Cache
 
@@ -107,6 +109,9 @@ Without `--json`, stderr contains `code: message`. Codes include `invalid_home`,
 configuration data are never included. Argument errors use Clap's text usage
 on stderr, including when a malformed command mentions `--json`; help and
 version use stdout and exit 0.
+Failed stdout writes, including closed pipes, exit 1 with `output_unavailable`
+rather than panicking. If stderr is also unavailable, the exit code is retained.
+Output already accepted by a failing sink cannot be retracted.
 
 The TUI requires terminal stdin/stdout and refuses piped execution before any
 state creation. Normal quit, Ctrl-C key handling, errors and Rust unwinding
