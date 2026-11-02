@@ -52,7 +52,10 @@ pub fn render_selection(
         crate::presentation::safe(&inventory.context.state_dir.to_string_lossy())
     ));
     for diagnostic in &inventory.diagnostics {
-        text.push_str(&format!("\n{}: {}", diagnostic.code, diagnostic.message));
+        text.push_str(&format!(
+            "\n{}",
+            crate::presentation::diagnostic(diagnostic)
+        ));
     }
     frame.render_widget(
         Paragraph::new(text)

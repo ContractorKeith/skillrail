@@ -91,7 +91,10 @@ fn main() -> std::process::ExitCode {
                     output::stdout(&skillrail::presentation::details(&inventory, index))?;
                 }
                 for diagnostic in &inventory.diagnostics {
-                    output::stdout(&format!("{}: {}\n", diagnostic.code, diagnostic.message))?;
+                    output::stdout(&format!(
+                        "{}\n",
+                        skillrail::presentation::diagnostic(diagnostic)
+                    ))?;
                 }
             }
         }

@@ -134,6 +134,16 @@ fn default_state_dir(home: &Path, explicit_home: bool) -> PathBuf {
 pub struct Diagnostic {
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<DiagnosticLocation>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiagnosticLocation {
+    pub path: PathBuf,
+    pub agent: discovery::Agent,
+    pub scope: discovery::Scope,
+    pub category: &'static str,
 }
 
 #[derive(Debug, Serialize)]

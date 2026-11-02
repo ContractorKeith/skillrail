@@ -2,6 +2,50 @@ use serde_json::Value;
 use std::{fs, path::Path, process::Command};
 
 #[test]
+fn failed_root_diagnostic_identifies_location_agent_scope_and_category() {
+    let root = fixture();
+    let p = root.path();
+    write(p, "project/.agents/skills", "not a directory");
+    let result = scan(p);
+    let diagnostic = result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["code"] == "discovery_incomplete")
+        .unwrap();
+    assert_eq!(
+        diagnostic["location"]["path"],
+        p.join("project/.agents/skills").to_str().unwrap()
+    );
+    assert_eq!(diagnostic["location"]["agent"], "codex");
+    assert_eq!(diagnostic["location"]["scope"], "project");
+    assert_eq!(diagnostic["location"]["category"], "not_directory");
+}
+
+#[test]
+fn diagnostic_paths_escape_terminal_controls_but_keep_json_values() {
+    let path = "/fixture/project-\u{1b}[2J\n/.agents/skills";
+    let diagnostic = skillrail::Diagnostic {
+        code: "discovery_incomplete".into(),
+        message: "Cannot inspect root".into(),
+        location: Some(skillrail::DiagnosticLocation {
+            path: path.into(),
+            agent: skillrail::discovery::Agent::Codex,
+            scope: skillrail::discovery::Scope::Project,
+            category: "permission_denied",
+        }),
+    };
+    let human = skillrail::presentation::diagnostic(&diagnostic);
+    assert!(!human.contains('\u{1b}'));
+    assert!(!human.contains('\n'));
+    assert!(human.contains("\\u{1b}[2J\\n"));
+    assert_eq!(
+        serde_json::to_value(&diagnostic).unwrap()["location"]["path"],
+        path
+    );
+}
+
+#[test]
 fn mixed_case_or_duplicate_origin_keys_cannot_merge_sources() {
     let root = fixture();
     let p = root.path();

@@ -41,6 +41,12 @@ The version-1 object retains `schema_version`, resolved `context`,
 `scanned_at_unix_ms`, `discovery`, `items`, `occurrences`, and `diagnostics`.
 M1 fills the previously empty item/occurrence arrays with typed records:
 
+Incomplete discovery diagnostics carry a structured `location` with `path`,
+`agent`, `scope`, and a safe failure `category`. CLI/TUI render this context with
+terminal controls escaped; JSON preserves the original path. Generic diagnostics
+without a specific location omit this field. Raw operating-system error strings
+and configuration contents are never included.
+
 - Item: `id`, `kind` (`skill`), `name`, optional `description`, `source`
   (`identity`, `evidence`, optional `repository`/`subpath`, `owner`),
   `name_collision`, and `drift` (`single_source`, `equal`, `drifted`, `unknown`).

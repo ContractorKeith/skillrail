@@ -71,6 +71,35 @@ fn diagnostic(code: &str, message: &str) -> Diagnostic {
     Diagnostic {
         code: code.into(),
         message: message.into(),
+        location: None,
+    }
+}
+
+fn located(
+    message: &str,
+    path: &Path,
+    agent: Agent,
+    scope: Scope,
+    category: &'static str,
+) -> Diagnostic {
+    Diagnostic {
+        code: "discovery_incomplete".into(),
+        message: message.into(),
+        location: Some(crate::DiagnosticLocation {
+            path: path.to_owned(),
+            agent,
+            scope,
+            category,
+        }),
+    }
+}
+
+fn access_category(error: &std::io::Error) -> &'static str {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "permission_denied",
+        std::io::ErrorKind::NotADirectory => "not_directory",
+        std::io::ErrorKind::NotFound => "missing_target",
+        _ => "access_failed",
     }
 }
 
@@ -141,10 +170,13 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             {
                 continue;
             }
-            Err(_) => {
-                inventory.diagnostics.push(diagnostic(
-                    "discovery_incomplete",
+            Err(error) => {
+                inventory.diagnostics.push(located(
                     "A configured skill root is inaccessible or is not a directory.",
+                    &root,
+                    agent,
+                    scope,
+                    access_category(&error),
                 ));
                 continue;
             }
@@ -153,34 +185,46 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         for entry in entries.take(10_001) {
             match entry {
                 Ok(entry) => children.push(entry.path()),
-                Err(_) => inventory.diagnostics.push(diagnostic(
-                    "discovery_incomplete",
+                Err(error) => inventory.diagnostics.push(located(
                     "A skill root entry could not be read.",
+                    &root,
+                    agent,
+                    scope,
+                    access_category(&error),
                 )),
             }
         }
         children.sort();
         if children.len() > 10_000 {
-            inventory.diagnostics.push(diagnostic(
-                "discovery_incomplete",
+            inventory.diagnostics.push(located(
                 "Skill root exceeds the 10000 entry budget.",
+                &root,
+                agent,
+                scope,
+                "entry_budget",
             ));
             children.truncate(10_000);
         }
         for original in children {
             if original.to_str().is_none() {
-                inventory.diagnostics.push(diagnostic(
-                    "discovery_incomplete",
+                inventory.diagnostics.push(located(
                     "A non-UTF-8 skill location is unsupported.",
+                    &root,
+                    agent,
+                    scope,
+                    "unsupported_encoding",
                 ));
                 continue;
             }
             let entry_metadata = match fs::symlink_metadata(&original) {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    inventory.diagnostics.push(diagnostic(
-                        "discovery_incomplete",
+                Err(error) => {
+                    inventory.diagnostics.push(located(
                         "A candidate skill location could not be inspected.",
+                        &original,
+                        agent,
+                        scope,
+                        access_category(&error),
                     ));
                     continue;
                 }
@@ -199,9 +243,9 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound && !link => {
                         continue;
                     }
-                    Err(_) => inventory.diagnostics.push(diagnostic(
-                        "discovery_incomplete",
+                    Err(error) => inventory.diagnostics.push(located(
                         "A candidate skill's metadata is inaccessible; its occurrence remains unknown.",
+                        &original, agent, scope, access_category(&error),
                     )),
                     Ok(_) => {}
                 }

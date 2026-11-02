@@ -13,6 +13,20 @@ pub fn safe(text: &str) -> String {
         .collect()
 }
 
+pub fn diagnostic(diagnostic: &crate::Diagnostic) -> String {
+    let mut text = format!("{}: {}", safe(&diagnostic.code), safe(&diagnostic.message));
+    if let Some(location) = &diagnostic.location {
+        text.push_str(&format!(
+            " [{:?}/{:?}: {} ({})]",
+            location.agent,
+            location.scope,
+            safe(&location.path.to_string_lossy()),
+            location.category
+        ));
+    }
+    text
+}
+
 pub fn details(inventory: &Inventory, selected: usize) -> String {
     let Some(item) = inventory.items.get(selected) else {
         return "No standalone skills found in supported locations.\nCoverage is partial; see diagnostics.\n".into();
