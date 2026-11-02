@@ -566,3 +566,41 @@ stage control proves the interposer fires, while recorded stages survive retries
 The Linux test requires the existing C compiler prerequisite; portable stage
 recovery tests remain active on macOS. Sequential historical undo remains
 conservative, with explicit byte-preservation/conflict coverage.
+
+
+## M5 owned install evidence and limits
+
+Linux x86_64 fixtures exercise local directories and local Git object repositories,
+exact commit/subpath manifests, immutable copies, selected Claude/Codex user/project
+links, explicit selection, offline inventory provenance, credential-URL refusals,
+collisions/aliases, executable/binary/empty-directory preservation and guarded
+recovery. A Linux `write` interposer terminates an actual process halfway through
+snapshot staging; durable undo removes only its matching prefix. Typed checkpoints
+cover tree/link publication, boundary substitutions and interrupted/repeated undo.
+The real PTY smoke covers source and explicit selection, form/preview cancellation,
+apply, history, undo cancellation/application and terminal restoration.
+
+The [CLI install contract](CLI.md#owned-snapshot-installation) lists exact syntax,
+source budgets, ASCII-only names, all-source-symlink refusal, local ordinary/bare
+Git support and credential-free HTTPS-only remote support. Git plumbing runs in
+private bare metadata; source configuration, hooks, filters and scripts are not
+executed. Inventory remains offline with five unchanged read-only MCP tools.
+`source.installed` exposes validated snapshot provenance; it does not serve bodies
+or claim native session loading. Existing owners are never adopted by name/hash.
+
+The user source store is `<home>/.skillrail-sources` on both platforms. Recovery
+uses the existing private journal/lock with additive schema 3; schema 1/2 remain
+readable. Empty created parent directories remain after undo. Unknown discovered
+consumers in the selected context prevent undo; references outside that inventory
+are not discoverable guarantees. Native agent location evidence remains the M1/M4
+pinned evidence above, without new claims about live-session loading.
+
+Local execution is Linux only. macOS build/acceptance, APFS case/normalization,
+Darwin link-stat/ACL/exclusive-rename behavior, real credential-free HTTPS fetches,
+and disposable native agent sessions remain unverified integration/release checks.
+No tests contact real network repositories. HTTPS needs `/usr/bin/git`, its HTTPS
+transport/TLS trust and network access, plus absence of implicit netrc files in
+the OS account home. Netrc metadata is checked without reading credential values;
+HOME/CODEX_HOME are never overridden. No authentication helper or redirect
+fallback is provided. Independent Standards/Spec review and adversarial QA belong
+to the parent before ready/merge; this implementation run does not certify them.

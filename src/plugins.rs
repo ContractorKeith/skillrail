@@ -692,7 +692,7 @@ fn skills(
         ]);
         let id = format!("skill-{identity}");
         if !inventory.items.iter().any(|i| i.id == id) {
-            inventory.items.push(Item { id: id.clone(), kind: "skill", name: name.clone(), description: metadata.as_ref().and_then(|m| m.description.clone()), source: Source { identity, evidence: "plugin_root_and_canonical_skill_target; cache presence does not prove activation", repository: None, subpath: None, owner: "native_plugin" }, name_collision: false, drift: "unknown" });
+            inventory.items.push(Item { id: id.clone(), kind: "skill", name: name.clone(), description: metadata.as_ref().and_then(|m| m.description.clone()), source: Source { identity, evidence: "plugin_root_and_canonical_skill_target; cache presence does not prove activation", repository: None, subpath: None, installed: None, owner: "native_plugin" }, name_collision: false, drift: "unknown" });
         }
         let occurrence_id = format!(
             "occurrence-{}",

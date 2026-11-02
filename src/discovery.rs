@@ -290,7 +290,10 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             let description = metadata.as_ref().and_then(|m| m.description.clone());
             let source = canonical
                 .as_deref()
-                .map(provenance::source)
+                .map(|p| {
+                    crate::mutation::install::owned_source(paths, p)
+                        .unwrap_or_else(|| provenance::source(p))
+                })
                 .unwrap_or_else(|| provenance::unresolved(&original));
             let item_id = format!("skill-{}", source.identity);
             let mut reasons = vec!["Documented standalone discovery location; configured visibility does not prove session loading.".into(), "unknown: managed policy, session flags, custom configuration and trust were not resolved.".into()];
@@ -506,6 +509,9 @@ pub(crate) fn metadata(path: &Path) -> Result<Metadata, ()> {
 }
 pub(crate) fn metadata_with_limit(path: &Path, limit: u64) -> Result<Metadata, ()> {
     let text = files::text(&path.join("SKILL.md"), limit)?;
+    parse_metadata(&text)
+}
+pub(crate) fn parse_metadata(text: &str) -> Result<Metadata, ()> {
     let mut lines = text.lines();
     if lines.next() != Some("---") {
         return Err(());

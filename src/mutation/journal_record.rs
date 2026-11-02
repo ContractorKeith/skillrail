@@ -38,6 +38,9 @@ fn snapshot(identity: &Option<Identity>, bytes: &[u8]) -> Option<Snapshot> {
     })
 }
 pub(super) fn encode(record: &Record) -> Result<Vec<u8>, AppError> {
+    if record.install.is_some() {
+        return serde_json::to_vec(record).map_err(|_| journal_error());
+    }
     let changes = record
         .changes
         .iter()
@@ -105,7 +108,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Record, AppError> {
         .map_err(|_| journal_error())?
         .version
     {
-        1 => serde_json::from_slice(bytes).map_err(|_| journal_error()),
+        1 | 3 => serde_json::from_slice(bytes).map_err(|_| journal_error()),
         2 => {
             let wire: StoredRecord = serde_json::from_slice(bytes).map_err(|_| journal_error())?;
             let changes: Vec<_> = wire
@@ -148,6 +151,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Record, AppError> {
                 requests: wire.requests,
                 changes,
                 undo_changes,
+                install: None,
             })
         }
         _ => Err(journal_error()),

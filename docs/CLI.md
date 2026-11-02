@@ -1,4 +1,4 @@
-# CLI contract (M4)
+# CLI contract (M5)
 
 Implemented commands:
 
@@ -12,6 +12,7 @@ skillrail show <id> [--json]
 skillrail drift [filters] [--json]
 skillrail enable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
 skillrail disable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
+skillrail install <source> --agent claude|codex [--agent claude|codex] --scope user|project [--git] [--ref <ref>] [--skill <subpath>] [--expect <token>] [--apply] [--json]
 skillrail operations [--json]
 skillrail undo <operation-id> [--apply] [--json]
 skillrail mcp
@@ -21,7 +22,7 @@ No subcommand means `tui`. `--help` and `--version` require no application state
 Filters: `--kind skill|mcp`, `--agent claude|codex`,
 `--scope user|project|local|unknown`, `--limit 1..200` (default 100),
 `--offset 0..1000000` (default 0), `--revision <64-lowercase-hex>`.
-Global paths below apply to every command. Install/update/uninstall remain M5/M6.
+Global paths below apply to every command. Update/uninstall remain M6.
 
 ## Paths and isolation
 
@@ -514,3 +515,115 @@ New errors: `mutation_refused` / `mutation_conflict` exit 4, `mutation_io` /
 item/occurrence or missing valid operation IDs exit 3. JSON errors retain the
 existing stderr-only schema. Clap usage errors remain text. Interrupted records
 can remain even when a failed apply published no target; inspect history and undo.
+
+
+## Owned snapshot installation
+
+`install` defaults to a preview. `--apply` explicitly publishes the previewed
+snapshot and selected links. Repeat `--agent` to select both agents; each
+selection applies to the single required `--scope user|project`. Claude links
+use `.claude/skills/<frontmatter-name>`; Codex links use
+`.agents/skills/<frontmatter-name>`, beneath the selected home or project.
+No agent configuration is edited and no other agent/scope is implicitly selected.
+Native trust/session visibility stays unknown.
+
+```bash
+skillrail install /absolute/local/skill --agent codex --scope user --json
+skillrail install /absolute/local/skill --agent codex --scope user --expect '<preview-token>' --apply --json
+skillrail install /absolute/local/repository --git --ref main --skill skills/review --agent claude --agent codex --scope project --apply --json
+skillrail install https://github.com/example/skills.git --git --ref '<commit>' --skill skills/review --agent codex --scope user --json
+```
+
+Without `--git`, source is a local directory, including its working-tree bytes.
+With `--git`, source is a local ordinary/bare repository or credential-free
+HTTPS URL. Branch/tag/40-hex commit references use a conservative ASCII grammar;
+blank means HEAD. Ref expressions, remote helpers, SSH/scp, HTTP, file URLs,
+credentials/userinfo, ports, escapes, query strings and fragments refuse.
+Use an absolute filesystem path for local Git. Git worktrees, shallow local
+repositories, alternates, submodules and SHA-256 object repositories refuse.
+There is no picker or prompt in the CLI. An omitted `--skill` is accepted only
+when the source contains exactly one SKILL.md; otherwise provide the exact
+relative directory, or `.` for the root. Selection does not install other skills.
+
+New content lives exclusively under `<home>/.skillrail-sources/<owned-id>`;
+`--state-dir` moves recovery/cache data but never the owned source store.
+Links point to this snapshot, never the original source. Reinstalling an existing
+snapshot or using any occupied destination refuses. Native name/invocation
+collisions in the selected project context and case aliases also refuse.
+External content keeps its owner and location. No force/overwrite or implicit
+link addition to an earlier install is provided in M5.
+
+The private snapshot `.skillrail/manifest.json` records schema 1, owned ID,
+frontmatter name, exact snapshot/link/file paths and provenance. Git provenance
+records the requested ref (default HEAD), resolved commit, selected subpath and sanitized repository;
+local provenance records the absolute origin, subpath and content hash.
+`skillrail-snapshot-v1` hashes the sorted JSON entry records (relative path,
+bytes, executable boolean and directory boolean) using the application's
+length-prefixed SHA-256 field encoding. Empty directories participate. `.git`
+internals and added `.skillrail` bookkeeping do not participate. This digest is
+separate from inventory's existing full-folder fingerprint algorithm.
+Ordinary source permissions normalize to owner-only 0600/0700, retaining whether
+a file is executable. Snapshot directories are 0700. Source scripts never run.
+Later edits to the source do not change the installed snapshot.
+
+The accepted source has at most 1000 entries, depth 32, 512 KiB aggregate file
+bytes, 64 KiB SKILL.md, ASCII path segments up to 128 bytes, and a contained
+subpath up to 1024 bytes. Both name and description are required. The entire
+source tree is checked before selection. All source symlinks (including internal
+links), hard-linked files, special files, unsafe owners/permissions/ACLs,
+case collisions, Unicode paths, `.skillrail`, plugin manifests and submodule
+metadata refuse. These conservative limits avoid unverified APFS normalization
+and link semantics. `.gitattributes` is copied as inert data; filters are not run.
+
+Anonymous HTTPS additionally requires that the OS account home has neither
+`.netrc` nor `_netrc`: Git enables optional libcurl netrc lookup. The preflight
+checks metadata only and refuses without reading values. `NETRC=/dev/null`
+protects newer curl builds; the absence check protects older ones without
+overriding HOME/CODEX_HOME. Empty-auth negotiation and credential delegation are
+disabled. Concurrent creation of credential files after preflight is outside the
+same-user race guarantee. See [Git HTTP source](https://github.com/git/git/blob/v2.56.0/http.c).
+
+Git uses `/usr/bin/git` argument arrays with a cleared environment, no global or
+system config, no templates/hooks, no credential helper or prompts, and only
+HTTPS transport enabled. Local Git copies bounded objects/refs/HEAD/packed-refs
+into a private bare repository and never parses the source config. The metadata
+copy is limited to 64 MiB and individual guarded files to 4 MiB. HTTPS explicitly
+fetches into the same isolated repository, with redirects/proxies disabled and
+HTTP low-speed limits. No checkout, clean/smudge filter, submodule command,
+source script, shell interpolation or inventory fetch occurs. Network/DNS/storage
+costs of an explicit fetch are not a sandbox or fixed total transfer budget.
+Operational Git errors discard raw stderr and return fixed safe text.
+`tempfile` is now a runtime dependency to own and clean this private scratch.
+
+Install plans bind the selected journal path as well as home/project and source.
+Preview retains private content in memory and exposes only paths, manifest
+facts, token and actions. JSON schema 1 adds nullable/omitted `install` to install
+plans and `source.installed` to owned inventory sources. The latter contains
+validated provenance, revision and content hash; content bodies never enter
+inventory, SQLite or MCP. TUI `i` opens source/kind/ref/subpath/agents/scope fields.
+Enter/Tab advances, Up goes back, Backspace edits, Escape cancels. Enter on scope
+creates a retained preview; a separate Enter confirms apply. Source input is
+hidden so rejected credential URLs cannot echo into the terminal. Existing
+history/undo screens work with installs.
+
+Install operations use private journal schema 3 under the existing lock; toggle
+records keep schema 2 and schema-1/2 recovery remains readable. Schema 3 stores
+source content once, with inode evidence separately. Admission serializes the
+worst future metadata/parent chains against the same 4 MiB lifecycle budget.
+Intent is synced before parent/stage creation; a private stage tree is recorded
+before writing files, complete file identities before exclusive tree publication,
+and link identity before each exclusive link publication. The snapshot publishes
+first, then links individually. Operations are recoverable, not atomic as a set.
+An interrupted unrecorded file prefix or exact planned staged link can be cleaned;
+unknown bytes/paths and changed recorded identities refuse. Undo first validates
+the whole set, then removes matching links and content, retaining durable evidence
+across interruptions and repeated undo. Newly created empty store/agent parents
+are retained; undo removes only the owned tree and its stages/links.
+
+Undo also refuses extra discovered consumers of the snapshot in the selected
+home/project inventory. It cannot enumerate arbitrary filesystem references or
+unrelated project contexts; do not create external consumers while an install
+operation is being undone. The existing same-user/root, final-check race,
+filesystem/exclusive-rename and fsync limitations apply to tree/link operations.
+No macOS/native session or real HTTPS network validation is inferred from the
+Linux local/local-Git fixtures. Those remain explicit integration prerequisites.
