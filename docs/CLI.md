@@ -90,7 +90,8 @@ print the selected page; multi-page output adds offset, revision and next offset
 The TUI uses the same query matcher and human explanation formatter: `/` edits
 search, Enter leaves search for the matching details, Backspace edits, Escape
 cancels search, `k` cycles all/skill/mcp, `a` cycles all/claude/codex, `s` cycles
-all/user/project/local/unknown, and `x` clears search/filters. Arrows select
+all/user/project/local/unknown, `d` toggles the same drifted/unknown skill subset
+as CLI/MCP drift, and `x` clears search/filters including drift. Arrows select
 matching items, PgUp/PgDn scroll details, `r` rescans, q/Esc/Ctrl-C quit outside
 search (Ctrl-C also quits during search). Typed q/r/filter letters are search
 text while editing. Search/filter changes use the displayed snapshot, without

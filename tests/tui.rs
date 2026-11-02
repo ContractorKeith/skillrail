@@ -3,6 +3,87 @@ use ratatui::{Terminal, backend::TestBackend};
 use skillrail::{Application, Paths, tui};
 
 #[test]
+fn drift_toggle_matches_cli_and_clears_without_changing_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    for name in ["alpha", "beta"] {
+        let folder = root.path().join(".agents/skills").join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Fixture\n---\n"),
+        )
+        .unwrap();
+    }
+    std::os::unix::fs::symlink(
+        root.path().join("missing"),
+        root.path().join(".agents/skills/beta/broken"),
+    )
+    .unwrap();
+    let app = Application::new(
+        Paths::resolve(
+            Some(root.path().into()),
+            Some(root.path().into()),
+            Some(root.path().join("state")),
+        )
+        .unwrap(),
+    );
+    let inventory = app.scan().unwrap();
+    let mut view = tui::View::default();
+    let key = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    view.handle(&key('d'), &inventory);
+    assert!(view.query.drift_only);
+    let selected: Vec<_> = view
+        .query
+        .indices(&inventory)
+        .into_iter()
+        .map(|i| inventory.items[i].id.clone())
+        .collect();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_skillrail"))
+        .arg("--home")
+        .arg(root.path())
+        .arg("--project")
+        .arg(root.path())
+        .arg("--state-dir")
+        .arg(root.path().join("state"))
+        .args(["drift", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let cli: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let ids: Vec<_> = cli["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(selected, ids);
+    assert_eq!(selected.len(), 1);
+    assert_eq!(cli["items"][0]["name"], "beta");
+    let mut terminal = Terminal::new(TestBackend::new(150, 35)).unwrap();
+    terminal
+        .draw(|frame| view.render(frame, &inventory))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(text.contains("drift: drifted/unknown"));
+    view.handle(&key('d'), &inventory);
+    assert_eq!(view.query.indices(&inventory).len(), 2);
+    view.handle(&key('d'), &inventory);
+    view.handle(&key('x'), &inventory);
+    assert!(!view.query.drift_only);
+    view.handle(&key('/'), &inventory);
+    view.handle(&key('d'), &inventory);
+    assert_eq!(view.query.query.as_deref(), Some("d"));
+    assert!(!view.query.drift_only);
+}
+
+#[test]
 fn shared_inventory_renders_in_small_and_resized_terminal_and_quits() {
     let root = tempfile::tempdir().unwrap();
     let paths = Paths::resolve(

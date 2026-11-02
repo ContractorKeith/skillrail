@@ -27,7 +27,8 @@ cargo run --locked -- --home /path/to/home --project /path/to/project --state-di
 
 `skillrail` or `skillrail tui` opens the TUI when stdin and stdout are terminals.
 Use `/` to search, Enter for matching details, `k`/`a`/`s` to cycle kind/agent/scope,
-`x` to clear filters, arrows to select, PgUp/PgDn to scroll, and `r` to refresh.
+`d` to toggle drifted/unknown skills, `x` to clear filters, arrows to select,
+PgUp/PgDn to scroll, and `r` to refresh.
 `q`, Escape or Ctrl-C quit (Escape cancels an in-progress search). Piped TUI invocation fails
 with a diagnostic directing callers to `list --json`.
 

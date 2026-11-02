@@ -165,6 +165,10 @@ impl View {
                 cycle(&mut self.query.kind, &["skill", "mcp"]);
                 true
             }
+            KeyCode::Char('d') => {
+                self.query.drift_only = !self.query.drift_only;
+                true
+            }
             KeyCode::Char('s') => {
                 cycle(
                     &mut self.query.scope,
@@ -193,13 +197,18 @@ impl View {
             .copied()
             .unwrap_or(usize::MAX);
         let header = format!(
-            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  x: clear\nMatches: {}\n",
+            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {}\n",
             crate::presentation::safe(self.query.query.as_deref().unwrap_or("")),
             if self.editing { "_" } else { "" },
             self.query.kind.as_deref().unwrap_or("all"),
             self.query.agent.as_deref().unwrap_or("all"),
             self.query.scope.as_deref().unwrap_or("all"),
-            indices.len()
+            indices.len(),
+            if self.query.drift_only {
+                "drifted/unknown"
+            } else {
+                "all"
+            }
         );
         render_view(frame, inventory, selected, self.selection.scroll, &header);
     }
