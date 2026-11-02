@@ -15,7 +15,11 @@ fn failed_root_diagnostic_identifies_location_agent_scope_and_category() {
         .unwrap();
     assert_eq!(
         diagnostic["location"]["path"],
-        p.join("project/.agents/skills").to_str().unwrap()
+        p.canonicalize()
+            .unwrap()
+            .join("project/.agents/skills")
+            .to_str()
+            .unwrap()
     );
     assert_eq!(diagnostic["location"]["agent"], "codex");
     assert_eq!(diagnostic["location"]["scope"], "project");
@@ -24,7 +28,7 @@ fn failed_root_diagnostic_identifies_location_agent_scope_and_category() {
 
 #[test]
 fn diagnostic_paths_escape_terminal_controls_but_keep_json_values() {
-    let path = "/fixture/project-\u{1b}[2J\n/.agents/skills";
+    let path = "/fixture/project-\u{1b}[2J\n\u{061c}\u{200e}\u{200f}/.agents/skills";
     let diagnostic = skillrail::Diagnostic {
         code: "discovery_incomplete".into(),
         message: "Cannot inspect root".into(),
@@ -38,10 +42,38 @@ fn diagnostic_paths_escape_terminal_controls_but_keep_json_values() {
     let human = skillrail::presentation::diagnostic(&diagnostic);
     assert!(!human.contains('\u{1b}'));
     assert!(!human.contains('\n'));
+    assert!(
+        !human
+            .chars()
+            .any(|c| matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}'))
+    );
     assert!(human.contains("\\u{1b}[2J\\n"));
     assert_eq!(
         serde_json::to_value(&diagnostic).unwrap()["location"]["path"],
         path
+    );
+}
+
+#[test]
+fn malformed_skills_table_and_broken_config_link_report_unknown() {
+    let root = fixture();
+    let p = root.path();
+    write(p, "home/.codex/config.toml", "skills = 17\n");
+    assert!(
+        scan(p)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "config_unknown")
+    );
+    fs::remove_file(p.join("home/.codex/config.toml")).unwrap();
+    std::os::unix::fs::symlink("missing", p.join("home/.codex/config.toml")).unwrap();
+    assert!(
+        scan(p)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "config_unknown")
     );
 }
 
@@ -59,6 +91,9 @@ fn mixed_case_or_duplicate_origin_keys_cannot_merge_sources() {
         "URL = https://github.com/example/second.git\n",
         "[REMOTE \"origin\"]\nurl = https://github.com/example/second.git\n",
         "[remote\t\"origin\"]\nuRl = https://github.com/example/second.git\n",
+        "[remote \"orig\\in\"]\nurl = https://github.com/example/second.git\n",
+        "url\n",
+        "[core]\ninvalid junk\n",
     ] {
         write(p, "home/.agents/.git/config", &format!("{config}{extra}"));
         let result = scan(p);
@@ -69,6 +104,64 @@ fn mixed_case_or_duplicate_origin_keys_cannot_merge_sources() {
                 .unwrap()
                 .iter()
                 .all(|i| i["name_collision"] == true)
+        );
+    }
+}
+
+#[test]
+fn unresolved_symlink_has_no_installation_repository_provenance() {
+    let root = fixture();
+    let p = root.path();
+    for base in ["home/.agents", "project/.agents"] {
+        write(
+            p,
+            &format!("{base}/.git/config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/shared.git\n",
+        );
+    }
+    skill(p, "project/.agents/skills/check", "check");
+    fs::create_dir_all(p.join("home/.agents/skills")).unwrap();
+    std::os::unix::fs::symlink(p.join("missing"), p.join("home/.agents/skills/check")).unwrap();
+    let result = scan(p);
+    assert_eq!(result["items"].as_array().unwrap().len(), 2);
+    let unresolved = result["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["canonical_path"].is_null())
+        .unwrap();
+    let item = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == unresolved["item_id"])
+        .unwrap();
+    assert_eq!(item["source"]["evidence"], "unresolved_target");
+    assert!(item["source"]["repository"].is_null());
+}
+
+#[test]
+fn dangling_agent_parent_links_report_each_failed_root() {
+    let root = fixture();
+    let p = root.path();
+    for path in ["home/.agents", "project/.claude"] {
+        std::os::unix::fs::symlink("missing", p.join(path)).unwrap();
+    }
+    let result = scan(p);
+    for (path, agent, scope) in [
+        ("home/.agents/skills", "codex", "user"),
+        ("project/.claude/skills", "claude", "project"),
+    ] {
+        assert!(
+            result["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["location"]["path"]
+                    == p.canonicalize().unwrap().join(path).to_str().unwrap()
+                    && d["location"]["agent"] == agent
+                    && d["location"]["scope"] == scope
+                    && d["location"]["category"] == "missing_target")
         );
     }
 }

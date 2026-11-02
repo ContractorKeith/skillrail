@@ -66,6 +66,11 @@ therefore retain distinct identities while explaining personal precedence for
 
 ## Visibility and unsupported combinations
 
+Codex path selectors currently match the original or canonical SKILL.md path
+lexically. Alternate symlink spellings and paths containing `..` are not
+normalized; their native-agent semantics have not been verified. A missing
+disable observation is not evidence of enablement; visibility remains unknown.
+
 M1 reports configured visibility as `unknown` with concrete observations and
 reasons. It does not claim that any session loaded a skill. User-level Codex
 TOML is bounded and parsed to explain matching enable/disable rules. A matching

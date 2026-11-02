@@ -12,6 +12,16 @@ pub struct Source {
     pub owner: &'static str,
 }
 
+pub fn unresolved(path: &Path) -> Source {
+    Source {
+        identity: files::id(&["unresolved", &path.to_string_lossy()]),
+        evidence: "unresolved_target",
+        repository: None,
+        subpath: None,
+        owner: "external_unknown",
+    }
+}
+
 pub fn source(path: &Path) -> Source {
     for parent in path.ancestors() {
         let git = parent.join(".git");
@@ -53,6 +63,7 @@ pub fn source(path: &Path) -> Source {
 fn origin(config: &str) -> Option<String> {
     let mut in_origin = false;
     let mut remote = None;
+    let mut in_section = false;
     for line in config.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
@@ -61,7 +72,7 @@ fn origin(config: &str) -> Option<String> {
         if lower.starts_with("[include")
             || lower.starts_with("[url")
             || lower.starts_with("[extensions")
-            || line.ends_with('\\')
+            || line.contains('\\')
         {
             return None;
         }
@@ -75,15 +86,35 @@ fn origin(config: &str) -> Option<String> {
             let mut parts = section.splitn(2, char::is_whitespace);
             let kind = parts.next()?;
             let subsection = parts.next().map(str::trim);
-            in_origin = kind.eq_ignore_ascii_case("remote") && subsection == Some("\"origin\"");
-        } else if in_origin
-            && let Some((key, value)) = line.split_once('=')
-            && key.trim().eq_ignore_ascii_case("url")
-        {
-            if remote.is_some() {
+            if kind.is_empty() || !kind.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
                 return None;
             }
-            remote = Some(safe_remote(value.trim())?);
+            if let Some(subsection) = subsection {
+                let name = subsection.strip_prefix('"')?.strip_suffix('"')?;
+                if name.contains('"') {
+                    return None;
+                }
+            }
+            in_section = true;
+            in_origin = kind.eq_ignore_ascii_case("remote") && subsection == Some("\"origin\"");
+        } else {
+            let (key, value) = line.split_once('=').map_or((line, None), |(key, value)| {
+                (key.trim(), Some(value.trim()))
+            });
+            // Validate even ignored keys: malformed config is not provenance evidence.
+            if !in_section
+                || value.is_some_and(|v| v.contains('"'))
+                || !key.starts_with(|c: char| c.is_ascii_alphabetic())
+                || !key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            {
+                return None;
+            }
+            if in_origin && key.eq_ignore_ascii_case("url") {
+                if remote.is_some() {
+                    return None;
+                }
+                remote = Some(safe_remote(value?)?);
+            }
         }
     }
     remote

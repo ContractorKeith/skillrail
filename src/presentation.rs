@@ -4,7 +4,7 @@ use crate::Inventory;
 pub fn safe(text: &str) -> String {
     text.chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+            if c.is_control() || matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
                 c.escape_default().to_string()
             } else {
                 c.to_string()

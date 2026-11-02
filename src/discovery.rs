@@ -165,8 +165,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
             Err(error)
-                if error.kind() == std::io::ErrorKind::NotFound
-                    && fs::symlink_metadata(&root).is_err() =>
+                if error.kind() == std::io::ErrorKind::NotFound && confirmed_absent(&root) =>
             {
                 continue;
             }
@@ -284,7 +283,10 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 .and_then(|m| m.name.clone())
                 .unwrap_or(fallback.clone());
             let description = metadata.as_ref().and_then(|m| m.description.clone());
-            let source = provenance::source(canonical.as_deref().unwrap_or(&original));
+            let source = canonical
+                .as_deref()
+                .map(provenance::source)
+                .unwrap_or_else(|| provenance::unresolved(&original));
             let item_id = format!("skill-{}", source.identity);
             let mut reasons = vec!["Documented standalone discovery location; configured visibility does not prove session loading.".into(), "unknown: managed policy, session flags, custom configuration and trust were not resolved.".into()];
             if agent == Agent::Claude && claude_fallback.as_ref() == Some(&root) {
@@ -473,6 +475,18 @@ pub fn project_ancestors(project: &Path) -> Vec<PathBuf> {
     result
 }
 
+// A missing child beneath a dangling link is a failed root, not ordinary absence.
+fn confirmed_absent(path: &Path) -> bool {
+    for parent in path.ancestors() {
+        match fs::symlink_metadata(parent) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(_) => return parent != path && fs::metadata(parent).is_ok_and(|m| m.is_dir()),
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 fn metadata(path: &Path) -> Result<Metadata, ()> {
     let text = files::text(&path.join("SKILL.md"), 64 * 1024)?;
     let mut lines = text.lines();
@@ -514,7 +528,7 @@ struct Rule {
     enabled: bool,
 }
 fn codex_rules(path: &Path) -> Result<Vec<Rule>, ()> {
-    if !path.try_exists().map_err(|_| ())? {
+    if confirmed_absent(path) {
         return Ok(vec![]);
     }
     let text = files::text(path, 128 * 1024)?;
@@ -522,6 +536,9 @@ fn codex_rules(path: &Path) -> Result<Vec<Rule>, ()> {
     let Some(skills) = config.get("skills") else {
         return Ok(vec![]);
     };
+    if !skills.is_table() {
+        return Err(());
+    }
     let Some(entries) = skills.get("config") else {
         return Ok(vec![]);
     };
