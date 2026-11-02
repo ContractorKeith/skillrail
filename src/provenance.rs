@@ -61,10 +61,18 @@ pub fn source(path: &Path) -> Source {
 }
 
 fn origin(config: &str) -> Option<String> {
+    // This deliberately narrow grammar must never normalize unknown Git syntax.
+    if !config.is_ascii()
+        || config
+            .bytes()
+            .any(|c| c.is_ascii_control() && !b"\t\r\n".contains(&c))
+    {
+        return None;
+    }
     let mut in_origin = false;
     let mut remote = None;
     let mut in_section = false;
-    for line in config.lines().map(str::trim) {
+    for line in config.lines().map(|line| line.trim_matches([' ', '\t'])) {
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
@@ -77,15 +85,15 @@ fn origin(config: &str) -> Option<String> {
             return None;
         }
         if line.starts_with('[') {
-            let section = line.strip_prefix('[')?.strip_suffix(']')?.trim();
+            let section = line.strip_prefix('[')?.strip_suffix(']')?;
             // Git section/key names are case-insensitive; quoted subsections are not.
             // Reject deprecated dotted remote syntax instead of overlooking another origin.
             if section.to_ascii_lowercase().starts_with("remote.") {
                 return None;
             }
-            let mut parts = section.splitn(2, char::is_whitespace);
+            let mut parts = section.splitn(2, [' ', '\t']);
             let kind = parts.next()?;
-            let subsection = parts.next().map(str::trim);
+            let subsection = parts.next().map(|s| s.trim_start_matches([' ', '\t']));
             if kind.is_empty() || !kind.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
                 return None;
             }
@@ -99,7 +107,10 @@ fn origin(config: &str) -> Option<String> {
             in_origin = kind.eq_ignore_ascii_case("remote") && subsection == Some("\"origin\"");
         } else {
             let (key, value) = line.split_once('=').map_or((line, None), |(key, value)| {
-                (key.trim(), Some(value.trim()))
+                (
+                    key.trim_matches([' ', '\t']),
+                    Some(value.trim_matches([' ', '\t'])),
+                )
             });
             // Validate even ignored keys: malformed config is not provenance evidence.
             if !in_section

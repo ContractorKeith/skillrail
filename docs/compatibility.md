@@ -103,6 +103,9 @@ Canonical folder targets prove symlink aliases. Separate canonical folders
 are related only when local `.git/config` supplies one unambiguous `origin`
 HTTPS URL and the same repository-relative skill subpath. This is declared
 local Git evidence, **not authenticated upstream identity**. Remote config is
+accepted only in the supported ASCII grammar; non-ASCII configuration and
+unsupported whitespace conservatively fall back to canonical identity.
+Remote config is
 never executed; includes, SSH/SCP/file remotes, Git config quoting/expansion,
 linked-worktree gitfiles (for source identity), symlinked Git metadata and
 complex config formats are unsupported. Discovery fallback uses only the bounded

@@ -141,6 +141,32 @@ fn unresolved_symlink_has_no_installation_repository_provenance() {
 }
 
 #[test]
+fn unsupported_git_whitespace_never_establishes_shared_identity() {
+    let root = fixture();
+    let p = root.path();
+    let config = "[remote \"origin\"]\nurl = https://github.com/example/shared.git\n";
+    for base in ["home/.agents", "project/.agents"] {
+        skill(p, &format!("{base}/skills/check"), "check");
+        write(p, &format!("{base}/.git/config"), config);
+    }
+    let mut variants = vec![
+        config.replace("[remote", "[ remote"),
+        config.replace("\"]", "\" ]"),
+    ];
+    for space in [
+        '\u{00a0}', '\u{0085}', '\u{2003}', '\u{2028}', '\u{2029}', '\u{000b}', '\u{000c}',
+    ] {
+        variants.push(format!("{space}{config}"));
+        variants.push(config.replace("remote ", &format!("remote{space}")));
+        variants.push(config.replace(".git\n", &format!(".git{space}\n")));
+    }
+    for config in variants {
+        write(p, "home/.agents/.git/config", &config);
+        assert_eq!(scan(p)["items"].as_array().unwrap().len(), 2, "{config:?}");
+    }
+}
+
+#[test]
 fn dangling_agent_parent_links_report_each_failed_root() {
     let root = fixture();
     let p = root.path();
