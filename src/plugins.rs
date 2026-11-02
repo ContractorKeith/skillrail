@@ -686,11 +686,12 @@ fn skills(
                 canonical.as_ref().unwrap(),
                 &mut loading.bytes,
                 &mut loading.entries,
+                &mut loading.reads,
             )
         };
         if fingerprint.sha256.is_none()
             && !root_only
-            && (loading.bytes == 0 || loading.entries == 0)
+            && (loading.bytes == 0 || loading.entries == 0 || loading.reads == 0)
         {
             loading.exhausted = true;
         }

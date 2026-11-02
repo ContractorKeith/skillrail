@@ -15,13 +15,14 @@ pub struct Fingerprint {
 }
 
 pub fn fingerprint(root: &Path) -> Fingerprint {
-    fingerprint_with_budget(root, &mut (64 * 1024 * 1024), &mut 10_000)
+    fingerprint_with_budget(root, &mut (64 * 1024 * 1024), &mut 10_000, &mut 10_000)
 }
 
 pub(crate) fn fingerprint_with_budget(
     root: &Path,
     remaining_bytes: &mut u64,
     remaining_entries: &mut usize,
+    remaining_reads: &mut usize,
 ) -> Fingerprint {
     let mut hash = Sha256::new();
     let mut diagnostics = Vec::new();
@@ -39,6 +40,7 @@ pub(crate) fn fingerprint_with_budget(
         &mut failure,
         remaining_bytes,
         remaining_entries,
+        remaining_reads,
     )
     .is_err()
     {
@@ -77,6 +79,7 @@ fn walk(
     failure: &mut Option<PathBuf>,
     remaining_bytes: &mut u64,
     remaining_entries: &mut usize,
+    remaining_reads: &mut usize,
 ) -> Result<(), ()> {
     if *remaining_entries == 0 {
         return Err(());
@@ -147,6 +150,7 @@ fn walk(
                 failure,
                 remaining_bytes,
                 remaining_entries,
+                remaining_reads,
             )?;
         }
     } else if metadata.is_file() {
@@ -160,6 +164,10 @@ fn walk(
             return Err(());
         }
         *remaining_bytes -= metadata.len();
+        if *remaining_reads == 0 {
+            return Err(());
+        }
+        *remaining_reads -= 1;
         field(
             hash,
             &files::read(path, metadata.len().min(16 * 1024 * 1024))?,

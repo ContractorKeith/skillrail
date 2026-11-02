@@ -1,6 +1,80 @@
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 
+#[test]
+fn conflicting_versions_in_one_installation_scope_are_unknown() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p";
+    for version in ["1", "2"] {
+        write(
+            p,
+            &format!("{base}/{version}/.claude-plugin/plugin.json"),
+            r#"{"name":"p","mcpServers":{"server":{"command":"never"}}}"#,
+        );
+    }
+    let records: Vec<_> = ["1", "2"].into_iter().map(|version| json!({"scope":"user","installPath":p.join(base).join(version),"version":version})).collect();
+    write(
+        p,
+        "home/.claude/plugins/installed_plugins.json",
+        &json!({"version":2,"plugins":{"p@m":records}}).to_string(),
+    );
+    let result = scan(p);
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "plugin_registry_unknown")
+    );
+    assert!(
+        result["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["origin"]["installation"]["status"] == "unknown")
+    );
+}
+
+#[test]
+fn fingerprint_reads_consume_shared_plugin_read_budget() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p/1";
+    write(
+        p,
+        &format!("{base}/.claude-plugin/plugin.json"),
+        r#"{"name":"p","mcpServers":{"server":{"command":"never"}}}"#,
+    );
+    write(
+        p,
+        &format!("{base}/skills/example/SKILL.md"),
+        "---\nname: example\ndescription: Fixture\n---\n",
+    );
+    for n in 0..300 {
+        write(p, &format!("{base}/skills/example/file{n}"), "x");
+    }
+    let result = scan(p);
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "plugin_budget_exceeded")
+    );
+    let rows = result["occurrences"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .filter(|o| o["mcp"].is_null())
+            .all(|o| o["fingerprint"]["sha256"].is_null())
+    );
+    assert!(
+        rows.iter()
+            .filter(|o| !o["mcp"].is_null())
+            .all(|o| o["mcp"]["configured_status"] == "unknown")
+    );
+}
+
 fn write(root: &Path, path: &str, text: &str) {
     let path = root.join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -692,6 +766,18 @@ fn codex_installation_selection_uses_native_version_order_and_versioned_identity
             .contains("plugin_install_metadata_unknown")
     );
     assert!(!result.to_string().contains("CANARY_REMOTE"));
+    write(
+        p,
+        &format!("{base}/.codex-remote-plugin-install.json"),
+        r#"{"schema_version":1,"remote_plugin_id":"CANARY_REMOTE","new_policy":"CANARY_POLICY"}"#,
+    );
+    let result = scan(p);
+    assert!(
+        result["diagnostics"]
+            .to_string()
+            .contains("plugin_install_metadata_unknown")
+    );
+    assert!(!result.to_string().contains("CANARY_"));
 }
 
 #[test]

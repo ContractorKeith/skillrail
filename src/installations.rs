@@ -113,7 +113,7 @@ pub(crate) fn claude(
                 }
                 if records
                     .iter()
-                    .any(|r: &Record| r.path == expected && r.scope == scope)
+                    .any(|r: &Record| r.path.parent() == expected.parent() && r.scope == scope)
                 {
                     return Err(());
                 }
@@ -189,7 +189,10 @@ pub(crate) fn codex_metadata(
         return;
     }
     let valid = loading.json(&path).is_ok_and(|v| {
-        v.get("schema_version").and_then(serde_json::Value::as_u64) == Some(1)
+        v.as_object().is_some_and(|m| {
+            m.keys()
+                .all(|k| matches!(k.as_str(), "schema_version" | "remote_plugin_id"))
+        }) && v.get("schema_version").and_then(serde_json::Value::as_u64) == Some(1)
             && v.get("remote_plugin_id")
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|s| !s.trim().is_empty())
