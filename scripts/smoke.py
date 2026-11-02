@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import signal
 import sqlite3
 import struct
 import subprocess
@@ -42,10 +43,37 @@ def cli_smoke(binary, root):
         assert inventory["scanned_at_unix_ms"] > 0
         normalized = copy.deepcopy(inventory)
         del normalized["scanned_at_unix_ms"]
+        normalized.pop("page", None)
         outputs.append(normalized)
         (root / "state/index.sqlite3").unlink()
     assert outputs[0] == outputs[1]
+    drift = json.loads(subprocess.check_output(command(binary, root) + ["drift", "--json"]))
+    assert len(drift["items"]) == 1 and drift["items"][0]["drift"] == "drifted"
     print("CLI smoke: isolated scan/list JSON and cache rebuild passed")
+
+
+def screen_text(data, rows=16, columns=100):
+    """Replay cursor-positioned terminal deltas for assertions on visible text."""
+    screen = [[" "] * columns for _ in range(rows)]
+    row = column = 0
+    for match in re.finditer(r"\x1b\[[0-?]*[ -/]*[@-~]|[^\x1b]", data.decode("utf-8", errors="replace")):
+        token = match.group()
+        if token.startswith("\x1b["):
+            if token[-1] in "Hf":
+                position = token[2:-1].split(";")
+                row = int(position[0] or 1) - 1
+                column = int(position[1] or 1) - 1 if len(position) > 1 else 0
+            elif token == "\x1b[2J":
+                screen = [[" "] * columns for _ in range(rows)]
+        elif token == "\r":
+            column = 0
+        elif token == "\n":
+            row += 1
+        elif token.isprintable():
+            if 0 <= row < rows and 0 <= column < columns:
+                screen[row][column] = token
+            column += 1
+    return "\n".join("".join(line) for line in screen)
 
 
 def tui_smoke(binary, root, fail_refresh=False):
@@ -82,8 +110,24 @@ def tui_smoke(binary, root, fail_refresh=False):
                 refreshed = len(json.loads(row[0])["items"]) == 4
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
+            # Search is typed through the real PTY, then Enter opens matching details.
+            os.write(master, b"/refreshed\r")
+            while "Search: refreshed |" not in screen_text(output) or "Added after startup" not in screen_text(output):
+                assert time.monotonic() < deadline, "TUI search did not select matching details"
+                if select.select([master], [], [], 0.1)[0]:
+                    output.extend(os.read(master, 65536))
+            os.write(master, b"aa")
+            while "agent: codex" not in screen_text(output):
+                assert time.monotonic() < deadline, "TUI agent filter did not change"
+                if select.select([master], [], [], 0.1)[0]:
+                    output.extend(os.read(master, 65536))
             os.write(master, b"\x1b[B\x1b[6~")
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 30, 0, 0))
+            os.kill(process.pid, signal.SIGWINCH)
+            while not screen_text(output, 8, 30).splitlines()[7].startswith("└"):
+                assert time.monotonic() < deadline, "TUI did not redraw the resized terminal"
+                if select.select([master], [], [], 0.1)[0]:
+                    output.extend(os.read(master, 65536))
             os.write(master, b"q")
         assert process.wait(timeout=10) == (1 if fail_refresh else 0)
         while select.select([master], [], [], 0)[0]:

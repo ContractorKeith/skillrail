@@ -33,11 +33,20 @@ pub fn render_selection(
     selected: usize,
     scroll: u16,
 ) {
+    render_view(frame, inventory, selected, scroll, "");
+}
+fn render_view(
+    frame: &mut Frame<'_>,
+    inventory: &Inventory,
+    selected: usize,
+    scroll: u16,
+    header: &str,
+) {
     let mut text = format!(
-        "Skills/MCP: {} | partial coverage | Last scan: {} (Unix ms)\nItem {}/{} | arrows: select | PgUp/PgDn: scroll | r: refresh | q: quit\n\n{}",
+        "{header}Skills/MCP: {} | partial coverage | Last scan: {} (Unix ms)\nItem {}/{} | arrows: select | PgUp/PgDn: scroll | r: refresh | q: quit\n\n{}",
         inventory.items.len(),
         inventory.scanned_at_unix_ms,
-        if inventory.items.is_empty() {
+        if selected >= inventory.items.len() {
             0
         } else {
             selected + 1
@@ -93,6 +102,126 @@ impl Selection {
     }
 }
 
+/// Interactive state only filters the last explicit scan; it never discovers sources.
+#[derive(Default)]
+pub struct View {
+    pub selection: Selection,
+    pub query: crate::query::Query,
+    pub editing: bool,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub enum Action {
+    Continue,
+    Refresh,
+    Quit,
+}
+impl View {
+    pub fn handle(&mut self, event: &Event, inventory: &Inventory) -> Action {
+        let Event::Key(key) = event else {
+            return Action::Continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            return Action::Continue;
+        }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Action::Quit;
+        }
+        if self.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    self.query.query = None;
+                    self.editing = false;
+                }
+                KeyCode::Enter => self.editing = false,
+                KeyCode::Backspace => {
+                    if let Some(query) = &mut self.query.query {
+                        query.pop();
+                    }
+                }
+                KeyCode::Char(c) if !c.is_control() => {
+                    let query = self.query.query.get_or_insert_with(String::new);
+                    if query.len() + c.len_utf8() <= 256 {
+                        query.push(c);
+                    }
+                }
+                _ => {}
+            }
+            self.selection = Selection::default();
+            return Action::Continue;
+        }
+        if should_quit(event) {
+            return Action::Quit;
+        }
+        let changed = match key.code {
+            KeyCode::Char('/') => {
+                self.editing = true;
+                true
+            }
+            KeyCode::Char('a') => {
+                cycle(&mut self.query.agent, &["claude", "codex"]);
+                true
+            }
+            KeyCode::Char('k') => {
+                cycle(&mut self.query.kind, &["skill", "mcp"]);
+                true
+            }
+            KeyCode::Char('s') => {
+                cycle(
+                    &mut self.query.scope,
+                    &["user", "project", "local", "unknown"],
+                );
+                true
+            }
+            KeyCode::Char('r') => return Action::Refresh,
+            KeyCode::Char('x') => {
+                self.query = crate::query::Query::default();
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            self.selection = Selection::default();
+        }
+        self.selection
+            .handle(event, self.query.indices(inventory).len());
+        Action::Continue
+    }
+    pub fn render(&self, frame: &mut Frame<'_>, inventory: &Inventory) {
+        let indices = self.query.indices(inventory);
+        let selected = indices
+            .get(self.selection.item)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let header = format!(
+            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  x: clear\nMatches: {}\n",
+            crate::presentation::safe(self.query.query.as_deref().unwrap_or("")),
+            if self.editing { "_" } else { "" },
+            self.query.kind.as_deref().unwrap_or("all"),
+            self.query.agent.as_deref().unwrap_or("all"),
+            self.query.scope.as_deref().unwrap_or("all"),
+            indices.len()
+        );
+        render_view(frame, inventory, selected, self.selection.scroll, &header);
+    }
+    pub fn refreshed(&mut self, inventory: &Inventory) {
+        self.selection.item = self
+            .selection
+            .item
+            .min(self.query.indices(inventory).len().saturating_sub(1));
+        self.selection.scroll = 0;
+    }
+}
+fn cycle(value: &mut Option<String>, choices: &[&str]) {
+    *value = match value.as_deref() {
+        None => Some(choices[0].into()),
+        Some(current) => choices
+            .iter()
+            .position(|v| *v == current)
+            .and_then(|index| choices.get(index + 1))
+            .map(|v| (*v).into()),
+    };
+}
+
 // Drop also runs on I/O errors and unwinding; Ratatui installs its panic restore hook.
 struct RestoreTerminal;
 impl Drop for RestoreTerminal {
@@ -104,7 +233,7 @@ impl Drop for RestoreTerminal {
 pub fn run(application: &Application) -> Result<(), AppError> {
     require_terminal()?;
     let mut inventory = application.scan()?;
-    let mut selection = Selection::default();
+    let mut view = View::default();
     let io_error = || {
         AppError::new(
             "terminal_unavailable",
@@ -115,19 +244,17 @@ pub fn run(application: &Application) -> Result<(), AppError> {
     let mut terminal = ratatui::try_init().map_err(|_| io_error())?;
     loop {
         terminal
-            .draw(|frame| render_selection(frame, &inventory, selection.item, selection.scroll))
+            .draw(|frame| view.render(frame, &inventory))
             .map_err(|_| io_error())?;
         let event = event::read().map_err(|_| io_error())?;
-        if should_quit(&event) {
-            return Ok(());
+        match view.handle(&event, &inventory) {
+            Action::Quit => return Ok(()),
+            Action::Refresh => {
+                inventory = application.scan()?;
+                view.refreshed(&inventory);
+            }
+            Action::Continue => {}
         }
-        if matches!(event, Event::Key(key) if key.kind == KeyEventKind::Press && key.code == KeyCode::Char('r'))
-        {
-            inventory = application.scan()?;
-            selection.item = selection.item.min(inventory.items.len().saturating_sub(1));
-            selection.scroll = 0;
-        }
-        selection.handle(&event, inventory.items.len());
         // Resize and other events redraw on the next iteration.
     }
 }

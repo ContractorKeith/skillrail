@@ -27,7 +27,11 @@ pub fn finish(result: Result<(), AppError>, json: bool) -> std::process::ExitCod
             };
             // If stderr also fails, retain the error exit without a second panic.
             let _ = writeln!(std::io::stderr().lock(), "{message}");
-            std::process::ExitCode::from(1)
+            std::process::ExitCode::from(match error.code {
+                "invalid_arguments" => 2,
+                "item_not_found" => 3,
+                _ => 1,
+            })
         }
     }
 }

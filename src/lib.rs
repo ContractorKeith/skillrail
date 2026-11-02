@@ -6,9 +6,11 @@ pub mod installations;
 mod json_config;
 pub mod layers;
 pub mod mcp_inventory;
+pub mod mcp_server;
 mod plugins;
 pub mod presentation;
 mod provenance;
+pub mod query;
 pub mod tui;
 mod worktree;
 

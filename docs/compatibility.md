@@ -318,3 +318,40 @@ values, extracts bundles or contacts a network. Raw configuration trees remain
 transient. Typed sanitized data alone feeds CLI/TUI/SQLite. New layer/registry
 canaries, cumulative-budget fixtures and native evidence complement the M1
 provenance, terminal escaping, cache and worktree regressions.
+
+## M3 read-only MCP protocol evidence
+
+The server uses the official [Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)
+crate **rmcp 3.8.0** (Cargo.lock pinned), with server/async-stdio features;
+client/child-process support is test-only. No HTTP/auth transport is enabled.
+Tokio supplies asynchronous stdio and a limited blocking scan worker. These
+additions avoid maintaining custom negotiation/protocol models and allow an
+actual official SDK client to verify the executable.
+
+The implemented session lifecycle follows the official
+[lifecycle specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle),
+[stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+and [tools contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+The server explicitly limits negotiated versions to **2024-11-05, 2025-03-26,
+2025-06-18 and 2025-11-25**, rather than advertising every newer SDK version.
+All five tools use one text block containing the version-1 query JSON; no
+resources, prompts, writes, subscription or live MCP health capabilities are
+advertised. Tools retain configured visibility uncertainty from M1/M2.
+
+`tests/mcp_protocol.rs` uses rmcp's client/child-process transport against the
+binary for initialize/list/every read tool, safe errors, fresh scans, CLI parity,
+source-byte/credential canaries, and no configured command/network execution.
+`scripts/mcp-smoke.py` probes all four negotiated versions plus unsupported
+version fallback, malformed syntax, structurally invalid JSON-RPC, 64-KiB input
+limits, unknown tools/resources, argument errors, responsive protocol/busy errors during
+a real locked-cache scan, and EOF both idle and with a scan in flight. The SDK intentionally
+ignores syntax-invalid/oversized lines and returns safe Invalid Request for
+structurally invalid messages; this behavior is tested and documented, not
+claimed to be a custom parser. `scripts/accept.sh` runs both these checks and
+real PTY search/detail/refresh/navigation/resize/terminal-restoration checks.
+
+Local M3 evidence is Linux x86_64 with Rust 1.98.1. No macOS or native agent
+session execution is claimed by this implementation run. The same acceptance
+script runs in Linux/macOS CI; exact CI outcomes and independent/adversarial
+reviews remain integration checks. Existing native adapter evidence above is
+unchanged and does not establish MCP session loading.
