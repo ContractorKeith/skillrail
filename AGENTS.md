@@ -6,14 +6,17 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-Planning scaffold — 2026-11-02. M0 implementation is next.
+M0 harness implemented — 2026-11-02. Discovery adapters remain unimplemented;
+M1 supplies skill discovery. Linux local gate passes; platform CI and
+independent review evidence belong on the PR.
 
 ## Commands
-`bash scripts/accept.sh` is the shared worker/reviewer/CI gate (requires M0).
-After M0: `cargo run -- --help`, `cargo test --locked`, `cargo fmt --check`,
+`bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
+`cargo run --locked -- --help`, `cargo test --locked`, `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings`.
 
 ## Pointers
+- docs/CLI.md: implemented M0 commands, JSON, paths and cache/error contracts.
 - docs/PLAN.md: canonical spec, contracts, milestones and acceptance.
 - CONTEXT.md: glossary; docs/grill.md: confirmed interview decisions.
 - Session state: ../worklog/projects/skillrail.md. No repo-local worklog.
