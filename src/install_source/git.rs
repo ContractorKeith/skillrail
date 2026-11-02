@@ -194,20 +194,27 @@ pub(super) fn collect(
     Ok((entries, origin, Some(rev)))
 }
 fn copy_git_metadata(source: &Path, dest: &Path) -> Result<(), AppError> {
-    fn copy(source: &Path, dest: &Path, budget: &mut usize, depth: usize) -> Result<(), AppError> {
+    fn copy(
+        source: &Path,
+        dest: &Path,
+        budget: &mut usize,
+        remaining: &mut usize,
+        depth: usize,
+    ) -> Result<(), AppError> {
         if depth > 32 {
             return Err(unsafe_source());
         }
         let d = Directory::open(source)?;
         let entries = fs::read_dir(source)
             .map_err(|_| unsafe_source())?
-            .take(10001)
+            .take(*remaining + 1)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| unsafe_source())?;
-        if entries.len() > 10000 {
+        if entries.len() > *remaining {
             return Err(unsafe_source());
         }
         for e in entries {
+            *remaining = remaining.checked_sub(1).ok_or_else(unsafe_source)?;
             let n = e.file_name();
             let n = n
                 .to_str()
@@ -223,7 +230,7 @@ fn copy_git_metadata(source: &Path, dest: &Path) -> Result<(), AppError> {
                 .is_dir()
             {
                 fs::create_dir_all(&target).map_err(|_| unsafe_source())?;
-                copy(&p, &target, budget, depth + 1)?;
+                copy(&p, &target, budget, remaining, depth + 1)?;
             } else {
                 let s = d.read(n, false)?.ok_or_else(unsafe_source)?;
                 *budget = budget
@@ -235,15 +242,21 @@ fn copy_git_metadata(source: &Path, dest: &Path) -> Result<(), AppError> {
         Ok(())
     }
     let mut budget = 64 * 1024 * 1024;
+    let mut remaining = 10_000usize;
     for n in ["objects", "refs"] {
         let p = source.join(n);
         if p.exists() {
-            copy(&p, &dest.join(n), &mut budget, 0)?;
+            remaining = remaining.checked_sub(1).ok_or_else(unsafe_source)?;
+            copy(&p, &dest.join(n), &mut budget, &mut remaining, 0)?;
         }
     }
     let d = Directory::open(source)?;
     for n in ["HEAD", "packed-refs"] {
         if let Some(s) = d.read(n, false)? {
+            remaining = remaining.checked_sub(1).ok_or_else(unsafe_source)?;
+            budget = budget
+                .checked_sub(s.bytes.len())
+                .ok_or_else(unsafe_source)?;
             fs::write(dest.join(n), s.bytes).map_err(|_| unsafe_source())?;
         }
     }
@@ -295,6 +308,26 @@ fn no_netrc(home: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn metadata_entry_budget_is_shared_across_objects_and_refs() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let dest = temp.path().join("dest");
+        for root in ["objects", "refs"] {
+            fs::create_dir_all(source.join(root)).unwrap();
+            fs::create_dir_all(dest.join(root)).unwrap();
+            for parent in 0..51 {
+                for child in 0..100 {
+                    fs::create_dir_all(source.join(root).join(format!("d{parent}/d{child}")))
+                        .unwrap();
+                }
+            }
+        }
+        assert!(
+            copy_git_metadata(&source, &dest).is_err(),
+            "aggregate empty metadata directories bypassed the budget"
+        );
+    }
     #[test]
     fn implicit_http_credential_files_refuse_without_exposing_values_or_following_links() {
         let temp = tempfile::tempdir().unwrap();
