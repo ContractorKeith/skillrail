@@ -1,8 +1,23 @@
-# CLI contract (M2)
+# CLI contract (M3)
 
-Implemented commands: `version`, `scan [--json]`, `list [--json]`, `tui`.
+Implemented commands:
+
+```text
+skillrail [tui]
+skillrail version
+skillrail scan [--json]
+skillrail list [filters] [--json]
+skillrail search <query> [filters] [--json]
+skillrail show <id> [--json]
+skillrail drift [filters] [--json]
+skillrail mcp
+```
+
 No subcommand means `tui`. `--help` and `--version` require no application state.
-All other planned commands and filters remain unimplemented.
+Filters: `--kind skill|mcp`, `--agent claude|codex`,
+`--scope user|project|local|unknown`, `--limit 1..200` (default 100),
+`--offset 0..1000000` (default 0), `--revision <64-lowercase-hex>`.
+Global paths below apply to every command. No mutation commands are implemented.
 
 ## Paths and isolation
 
@@ -70,15 +85,24 @@ cause an operational error or imply absence. Source and original paths can
 contain controls: JSON uses ordinary escaping, while human output and TUI
 escape terminal controls and bidirectional formatting controls.
 
-Plain list/scan prints context, scan time and every item's explanations.
-The TUI uses exactly the same inventory and human explanation formatter: arrows
-select items, PgUp/PgDn scroll details, `r` rescans, q/Esc/Ctrl-C quit.
+Plain scan prints context, scan time and every item's explanations. Plain queries
+print the selected page; multi-page output adds offset, revision and next offset.
+The TUI uses the same query matcher and human explanation formatter: `/` edits
+search, Enter leaves search for the matching details, Backspace edits, Escape
+cancels search, `k` cycles all/skill/mcp, `a` cycles all/claude/codex, `s` cycles
+all/user/project/local/unknown, `d` toggles the same drifted/unknown skill subset
+as CLI/MCP drift, and `x` clears search/filters including drift. Arrows select
+matching items, PgUp/PgDn scroll details, `r` rescans, q/Esc/Ctrl-C quit outside
+search (Ctrl-C also quits during search). Typed q/r/filter letters are search
+text while editing. Search/filter changes use the displayed snapshot, without
+rescanning; Last scan changes only after a successful startup/manual scan.
+Resizing redraws the same snapshot.
 Claude linked-worktree fallback entries retain main-checkout original/canonical
 paths and an explicit visibility reason. Unsafe or unreadable fallback metadata
 adds `worktree_fallback_unknown`; Codex never receives this fallback. Invocation
 precedence applies to the matching command name only, independently of source
 identity. Diagnostics remain available below the selected item's details. A small
-terminal can scroll the entire view. Search/filters, the read-only MCP protocol and mutations remain later work.
+terminal can scroll the entire view. Mutations remain later work.
 
 ## MCP and plugin records
 
@@ -161,10 +185,10 @@ untrusted writers or hard-link an existing database into them.
 
 Exit 0 means a completed scan/cache replacement, including explicit unknown or
 partial inventory states. Operational errors exit 1; argument errors
-exit 2. Planned exits 3 (not found) and 4 (conflict/refused/unsupported mutation)
-have no implemented command yet.
+exit 2. `show` with an unknown stable item ID exits 3 (`item_not_found`).
+Exit 4 remains reserved for future refused mutations.
 
-Operational errors produce no stdout. With `scan --json` or `list --json`, stderr
+Operational errors produce no stdout. With any inventory command using `--json`, stderr
 contains one object of this form:
 
 ```json
@@ -174,7 +198,10 @@ contains one object of this form:
 Without `--json`, stderr contains `code: message`. Codes include `invalid_home`,
 `invalid_project`, `invalid_state_dir`, `invalid_path`, `index_unavailable`,
 `index_version_unsupported`, `clock_unavailable`, `output_unavailable`,
-`terminal_required` and `terminal_unavailable`. Raw OS/SQLite errors and raw
+`terminal_required` and `terminal_unavailable`. Query validation errors use `invalid_arguments`
+(exit 2, JSON stderr when `--json` is present); Clap parse errors retain text
+usage. `inventory_changed` and `response_too_large` exit 1. `mcp_unavailable`
+means initialization/transport failure (stderr only). Raw OS/SQLite errors and raw
 configuration data are never included. Argument errors use Clap's text usage
 on stderr, including when a malformed command mentions `--json`; help and
 version use stdout and exit 0.
@@ -186,4 +213,138 @@ The TUI requires terminal stdin/stdout and refuses piped execution before any
 state creation. Normal quit, Ctrl-C key handling, errors and Rust unwinding
 attempt terminal restoration; Ratatui also installs its panic restoration hook.
 Uncatchable process termination cannot run cleanup. PTY smokes verify restored
-terminal attributes and alternate-screen exit on quit and a refresh error.
+terminal attributes and alternate-screen exit on quit and a refresh error,
+including backpressured redraws with output drained during the exit wait.
+
+## Shared queries and pagination
+
+`list`, `search`, `show`, `drift` and all MCP read tools scan freshly using
+`Application::query`. TUI matching uses `Query::indices` over its last scan.
+No interface repeats filesystem discovery. `scan` retains the complete M0–M2
+snapshot envelope, without pagination; `list` now adds `page` and defaults to
+100 items. Schema/cache versions remain 1; existing item and occurrence IDs
+are unchanged. Consumers must accept additive fields.
+
+Search uses a case-insensitive Unicode-lowercase substring of item name,
+description or stable ID. Query text must be nonblank and at most 256 UTF-8
+bytes; ID arguments must be 1–256 UTF-8 bytes. Valid but unknown IDs are not
+found; malformed query arguments fail before scanning. Filters combine with
+AND. Agent and scope must match the same occurrence. A matching item retains
+**all** its occurrences so provenance and other-agent visibility are not lost.
+`drift` returns skills with `drifted` or `unknown` drift, including unresolved
+fingerprints, excluding MCP records and equal/single-source skills. Unknown
+trust/session state remains unknown in details and visibility results.
+
+Query results retain the inventory envelope with selected `items`/`occurrences`
+and complete scan diagnostics/context, plus:
+
+```json
+{"page":{"revision":"<64 hex characters>","offset":0,"limit":100,"total":123,"next_offset":100}}
+```
+
+Items and occurrences sort lexicographically by their existing stable IDs.
+`total` counts matching items before pagination; empty/out-of-range pages are
+successful and `next_offset` is null. Offset > 0 requires the previous page's
+revision. The revision hashes all sanitized inventory facts/context except scan
+time, independently of query/limit/offset. Keep the same filters/search while
+paging. Any changed fact (including diagnostics) returns `inventory_changed`;
+restart at offset 0 without revision. Unchanged scans keep revision even when
+time changes. Pagination never silently combines different observed inventories;
+scans are observations of files and do not promise an atomic filesystem snapshot.
+
+The encoded query JSON is capped at 1 MiB, including diagnostics and all selected
+occurrences. Serialization stops at that limit and returns `response_too_large`
+without partial query stdout. Reduce limit/narrow filters; a single oversized
+item or diagnostic set also fails explicitly, without truncating explanations.
+This limit applies to CLI queries and MCP tool content; MCP JSON-RPC escaping
+adds framing overhead. `scan` retains its complete snapshot contract.
+
+```bash
+skillrail list --kind mcp --agent claude --limit 20 --json
+skillrail search 'review' --kind skill --scope user --json
+skillrail show 'skill-<stable-id>' --json
+skillrail drift --agent codex --json
+skillrail list --limit 20 --offset 20 --revision '<previous-page-revision>' --json
+```
+
+## Read-only MCP stdio
+
+Start `skillrail --project /absolute/project mcp`; global home/state overrides
+are supported for fixtures. Stdout is newline-delimited JSON-RPC only. No logs,
+raw config, command/argument/env/header/URL values, skill bodies, bundled files,
+resources, or write tools are served. Only the rebuildable state cache is written.
+Configured servers/skills are never started and no network discovery/probe runs.
+No tracing subscriber is installed, so SDK parser error context is not logged.
+
+Initialize negotiates `2024-11-05`, `2025-03-26`, `2025-06-18`, or `2025-11-25`;
+an unsupported client proposal receives a supported version, which the client
+must accept or disconnect. Send `notifications/initialized` after the response.
+The capability set is tools only. `tools/list` returns all five definitions in
+fixed order, with input schemas and read-only/idempotent/closed-world annotations;
+there is no next cursor, and supplying a cursor is invalid.
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `list_inventory` | Optional kind, agent, scope, limit, offset, revision | Shared paginated inventory |
+| `search_inventory` | Required query plus list arguments | Shared paginated matches |
+| `get_item` | Required id only | Shared envelope with one item and all occurrences |
+| `explain_visibility` | Required id only | Same item envelope, including complete visibility reasons/observations |
+| `list_drift` | List arguments | Shared envelope for drifted/unknown skills |
+
+All tool argument objects reject unknown fields; types/ranges match CLI queries.
+Missing/invalid arguments, unknown tool names and invalid tools/list cursors return
+JSON-RPC `-32602` with fixed safe text. Unavailable methods/resources use `-32601`.
+SDK envelope-decoding exception: a non-string tool `name` or non-null, non-object
+`arguments` in outer `tools/call` params returns `-32601` before the tool
+handler runs. The pinned SDK dispatches these as unrecognized requests; this
+does not mean the named tool is unavailable. Well-formed argument objects
+reach Skillrail validation and use `-32602` for invalid fields/values.
+An outer `arguments:null` is treated as omitted: tools with optional arguments
+accept it, while tools requiring an ID or query return `-32602`.
+Unknown IDs and operational query failures return normal MCP tool results with
+`isError:true` and text JSON `{schema_version:1,error:{code,message}}`. Success
+uses `isError:false` and one `content` text block containing the exact shared
+query JSON. There is no structuredContent duplicate or skill-body resource.
+
+Transport lines are limited to 64 KiB (including newline). Following rmcp 3.8.0,
+malformed JSON syntax and oversized lines are discarded, with recovery at the
+next newline; structurally invalid JSON-RPC receives sanitized `-32600` without
+a correlated ID (the SDK omits the `id` field). Unknown notifications are ignored.
+Keep stdin open until the response has arrived; close stdin to disconnect. Incomplete trailing lines are dropped.
+Disconnect after initialization exits cleanly with no stdout trailer or stderr.
+An adapter keeps the SDK receive future in one persistent task so ordinary
+service polling cannot cancel a parser error after its input line was consumed.
+It forwards requests through a capacity-one channel; at most one further parsed
+request waits in the reader. Normal replies and parser errors use SDK framing
+and one shared writer lock held through frame flush. Close/drop stops the reader;
+write failures release the shared lock. No parser or raw-payload error path is
+reimplemented. `python3 scripts/mcp-smoke.py --repeat 20` runs a bounded 100-session
+stress pass, including 1,600 pipelined malformed requests; the default gate runs
+five sessions with 80 such requests. Client timeouts are unchanged.
+
+Initialization has a 30-second deadline. Each scan has a 30-second response
+deadline, runs off the protocol runtime, and holds the single scan slot until
+completion even after timeout/cancellation. Concurrent scans receive a fixed
+`-32603` busy/retry error rather than queuing more filesystem work. Disconnect
+observes stdin EOF before the SDK response drain and bounds runtime shutdown
+to 100 ms; a blocked filesystem call cannot hold process exit. Normal filesystem/cache errors remain safe tool errors.
+
+Example client configuration (edit manually; Skillrail does not install it):
+
+Claude Code `.mcp.json`:
+
+```json
+{"mcpServers":{"skillrail":{"command":"/absolute/path/skillrail","args":["--project","/absolute/project","mcp"]}}}
+```
+
+Codex `config.toml`:
+
+```toml
+[mcp_servers.skillrail]
+command = "/absolute/path/skillrail"
+args = ["--project", "/absolute/project", "mcp"]
+```
+
+Use actual absolute paths. These examples select project context explicitly;
+native approval/trust remains the client's responsibility. They make no claim
+that any current session loaded the server.

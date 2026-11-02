@@ -10,6 +10,8 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("home")).unwrap();
         std::fs::create_dir(root.path().join("project")).unwrap();
+        std::fs::create_dir(root.path().join(".git")).unwrap();
+        std::fs::create_dir(root.path().join("project/.git")).unwrap();
         Self { root }
     }
 
@@ -114,6 +116,7 @@ fn isolated_empty_inventory_rebuilds_and_explains_partial_coverage() {
     assert!(cache.is_file());
     first.as_object_mut().unwrap().remove("scanned_at_unix_ms");
     second.as_object_mut().unwrap().remove("scanned_at_unix_ms");
+    second.as_object_mut().unwrap().remove("page");
     assert_eq!(first, second);
     assert_eq!(
         std::fs::read_to_string(fixture.root.path().join("home/.claude")).unwrap(),
@@ -195,4 +198,124 @@ fn cache_symlink_is_refused_without_writing_target() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "unchanged");
+}
+
+#[test]
+fn query_filters_search_details_and_invalid_limits_are_public_contracts() {
+    let fixture = Fixture::new();
+    let skill = fixture.root.path().join("home/.agents/skills/queryable");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: queryable\ndescription: A special fixture\n---\nBODY_CANARY",
+    )
+    .unwrap();
+    let all = json(fixture.run(&["list", "--json"]));
+    let id = all["items"][0]["id"].as_str().unwrap();
+    let found = json(fixture.run(&[
+        "search", "SPECIAL", "--kind", "skill", "--agent", "codex", "--json",
+    ]));
+    assert_eq!(found["items"], all["items"]);
+    assert_eq!(found["page"]["total"], 1);
+    let detail = json(fixture.run(&["show", id, "--json"]));
+    assert_eq!(detail["items"], all["items"]);
+    assert!(!detail.to_string().contains("BODY_CANARY"));
+    assert_eq!(
+        json(fixture.run(&["list", "--agent", "claude", "--json"]))["items"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        fixture.run(&["show", "unknown", "--json"]).status.code(),
+        Some(3)
+    );
+    assert_eq!(
+        fixture
+            .run(&["list", "--limit", "0", "--json"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert_eq!(
+        fixture.run(&["list", "--kind", "banana"]).status.code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn pagination_is_stable_until_facts_change_and_each_cli_request_rescans() {
+    let fixture = Fixture::new();
+    for name in ["a", "b", "c"] {
+        let folder = fixture.root.path().join("home/.agents/skills").join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: pagination\n---\n"),
+        )
+        .unwrap();
+    }
+    let first = json(fixture.run(&["list", "--json", "--limit", "1"]));
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["page"]["total"], 3);
+    assert_eq!(first["page"]["next_offset"], 1);
+    let revision = first["page"]["revision"].as_str().unwrap();
+    let second = json(fixture.run(&[
+        "list",
+        "--json",
+        "--limit",
+        "1",
+        "--offset",
+        "1",
+        "--revision",
+        revision,
+    ]));
+    assert!(first["items"][0]["id"].as_str().unwrap() < second["items"][0]["id"].as_str().unwrap());
+    let end = json(fixture.run(&["list", "--json", "--offset", "100", "--revision", revision]));
+    assert_eq!(end["items"], serde_json::json!([]));
+    assert!(end["page"]["next_offset"].is_null());
+    std::fs::write(
+        fixture.root.path().join("home/.agents/skills/a/SKILL.md"),
+        "---\nname: changed\ndescription: new facts\n---\n",
+    )
+    .unwrap();
+    let changed = fixture.run(&["list", "--json", "--offset", "1", "--revision", revision]);
+    assert_eq!(changed.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&changed.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "inventory_changed");
+    let fresh = json(fixture.run(&["search", "changed", "--json"]));
+    assert_eq!(fresh["items"][0]["name"], "changed");
+    for args in [
+        vec!["search", "", "--json"],
+        vec!["list", "--limit", "201", "--json"],
+        vec!["list", "--scope", "bad", "--json"],
+        vec!["list", "--offset", "1", "--json"],
+    ] {
+        assert_eq!(fixture.run(&args).status.code(), Some(2));
+    }
+}
+
+#[test]
+fn oversized_detail_is_refused_without_partial_output() {
+    let fixture = Fixture::new();
+    // Many aliases of one source exercise occurrence expansion, not only item limits.
+    let source = fixture.root.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: shared\ndescription: Bounded details\n---\n",
+    )
+    .unwrap();
+    let skills = fixture.root.path().join("home/.agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    for i in 0..1200 {
+        std::os::unix::fs::symlink(&source, skills.join(format!("alias-{i:04}"))).unwrap();
+    }
+    let output = fixture.run(&["list", "--json", "--limit", "1"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "response_too_large");
+    assert_eq!(
+        std::fs::read_to_string(source.join("SKILL.md")).unwrap(),
+        "---\nname: shared\ndescription: Bounded details\n---\n"
+    );
 }
