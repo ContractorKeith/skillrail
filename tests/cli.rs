@@ -61,9 +61,9 @@ fn json(output: Output) -> serde_json::Value {
 }
 
 #[test]
-fn isolated_empty_inventory_rebuilds_and_explains_missing_adapters() {
+fn isolated_empty_inventory_rebuilds_and_explains_partial_coverage() {
     let fixture = Fixture::new();
-    // M0 must not traverse agent configuration, even inside the fixture.
+    // An invalid fixture agent root must produce a safe diagnostic.
     std::fs::write(
         fixture.root.path().join("home/.claude"),
         "not an agent directory",
@@ -73,8 +73,8 @@ fn isolated_empty_inventory_rebuilds_and_explains_missing_adapters() {
     assert_eq!(first["schema_version"], 1);
     assert_eq!(first["items"], serde_json::json!([]));
     assert_eq!(first["occurrences"], serde_json::json!([]));
-    assert_eq!(first["discovery"]["status"], "not_implemented");
-    assert_eq!(first["diagnostics"][0]["code"], "discovery_not_implemented");
+    assert_eq!(first["discovery"]["status"], "standalone_skills_partial");
+    assert_eq!(first["diagnostics"][0]["code"], "coverage_partial");
     for (field, dir) in [
         ("home", "home"),
         ("project", "project"),

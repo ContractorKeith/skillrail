@@ -12,16 +12,7 @@ pub fn stdout(text: &str) -> Result<(), AppError> {
 }
 
 pub fn human_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .chars()
-        .map(|c| {
-            if c.is_control() {
-                c.escape_default().to_string()
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
+    skillrail::presentation::safe(&path.to_string_lossy())
 }
 
 pub fn finish(result: Result<(), AppError>, json: bool) -> std::process::ExitCode {
