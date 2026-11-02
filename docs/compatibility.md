@@ -263,10 +263,19 @@ both facts remain visible. Malformed containers, per-server tables, booleans,
 arrays and supported approval enums produce sanitized diagnostics/invalid
 status. Nested or unknown policy remains explicitly unknown. A matching rule
 never makes an invalid or unsupported server definition valid.
+Standalone Codex definitions reject transport-incompatible fields (such as
+HTTP headers on a command, or arguments on a URL) and require unsigned integer
+`startup_timeout_ms`, matching the pinned native parser.
 
 [Claude manifest reference](https://code.claude.com/docs/en/plugins-reference)
 establishes default skills plus declared roots, and default `.mcp.json` then
 ordered declarations with whole-entry replacement inside that plugin. Root
+components are also discovered without the optional Claude manifest when a
+validated v2 installation record establishes plugin identity. Missing manifests
+without that identity remain unknown; malformed manifests are not treated as
+absent. The independent Claude 2.1.309 fixture installed a manifestless plugin
+with `skills/example/SKILL.md` and `.mcp.json`; replay covers both occurrences.
+Root
 `SKILL.md` is one plugin skill only when there is no `skills/` and no `skills`
 key. This fallback inventories only the root skill and does not enumerate or
 fingerprint unrelated plugin content; its full-folder digest is unknown.
@@ -288,6 +297,8 @@ Plugin loading has scan-wide limits: 128 inspected candidates, 256 declaration
 nodes (including nested arrays/repeated paths), 1000 entry/tree operations,
 256 file reads, and 1 MiB of content reads. Registry and install-metadata reads,
 manifest/components, skill metadata and fingerprints consume the shared budget.
+Every entry enumerated under declared skill roots consumes that same entry
+budget, including ordinary files that do not become skill candidates.
 A JSON file additionally has a 128 KiB ceiling. Existing bounded cache-root
 enumeration remains 1000 entries per agent cache. One `plugin_budget_exceeded`
 diagnostic marks truncation; final plugin MCP status becomes unknown, with no

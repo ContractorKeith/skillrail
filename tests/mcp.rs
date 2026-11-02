@@ -2,6 +2,118 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 
 #[test]
+fn installed_manifestless_claude_plugin_keeps_default_components() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p/1";
+    write(
+        p,
+        &format!("{base}/skills/example/SKILL.md"),
+        "---\nname: example\ndescription: Fixture\n---\n",
+    );
+    write(
+        p,
+        &format!("{base}/.mcp.json"),
+        r#"{"mcpServers":{"server":{"command":"never"}}}"#,
+    );
+    write(p, "home/.claude/plugins/installed_plugins.json", &json!({"version":2,"plugins":{"p@m":[{"scope":"user","installPath":p.join(base),"version":"1"}]}}).to_string());
+    let before = snapshot(p);
+    let result = scan(p);
+    let rows = result["occurrences"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .all(|o| o["scope"] == "user" && o["origin"]["installation"]["status"] == "selected")
+    );
+    assert!(
+        result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["source"]["owner"] == "native_plugin")
+    );
+    assert_eq!(snapshot(p), before);
+    write(p, &format!("{base}/.claude-plugin/plugin.json"), "{");
+    let malformed = scan(p);
+    assert!(malformed["occurrences"].as_array().unwrap().is_empty());
+    assert!(
+        malformed["diagnostics"]
+            .to_string()
+            .contains("plugin_manifest_unknown")
+    );
+}
+
+#[test]
+fn skill_root_enumeration_consumes_shared_plugin_entry_budget() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p/1";
+    write(
+        p,
+        &format!("{base}/.claude-plugin/plugin.json"),
+        r#"{"name":"p","skills":["./first","./second"],"mcpServers":{"server":{"command":"never"}}}"#,
+    );
+    for dir in ["first", "second"] {
+        for n in 0..600 {
+            write(p, &format!("{base}/{dir}/file{n}"), "");
+        }
+    }
+    let result = scan(p);
+    assert_eq!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "plugin_budget_exceeded")
+            .count(),
+        1
+    );
+    assert!(
+        result["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| !o["mcp"].is_null())
+            .all(|o| o["mcp"]["configured_status"] == "unknown")
+    );
+}
+
+#[test]
+fn codex_transport_fields_and_millisecond_types_match_native_schema() {
+    let root = fixture();
+    let p = root.path();
+    for (fields, status) in [
+        (
+            "command='never'\nhttp_headers={X='CANARY_HEADER'}",
+            "invalid",
+        ),
+        (
+            "url='https://example.invalid'\nargs=['CANARY_ARG']",
+            "invalid",
+        ),
+        ("command='never'\nstartup_timeout_ms=0.5", "invalid"),
+        ("command='never'\nstartup_timeout_ms=5", "enabled"),
+        ("command='never'\nargs=['CANARY_ARG']", "enabled"),
+        (
+            "url='https://example.invalid'\nhttp_headers={X='CANARY_HEADER'}",
+            "enabled",
+        ),
+    ] {
+        write(
+            p,
+            "home/.codex/config.toml",
+            &format!("[mcp_servers.server]\n{fields}\n"),
+        );
+        let result = scan(p);
+        assert_eq!(
+            result["occurrences"][0]["mcp"]["configured_status"], status,
+            "{fields}"
+        );
+        assert!(!result.to_string().contains("CANARY_"));
+    }
+}
+
+#[test]
 fn conflicting_versions_in_one_installation_scope_are_unknown() {
     let root = fixture();
     let p = root.path();

@@ -113,7 +113,18 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
                     if agent == Agent::Claude && !selected.is_empty() {
                         for record in selected {
                             let start = inventory.occurrences.len();
-                            inspect(&version, agent, record.scope, inventory, &mut loading);
+                            let installed_name = version
+                                .parent()
+                                .and_then(Path::file_name)
+                                .and_then(|n| n.to_str());
+                            inspect(
+                                &version,
+                                agent,
+                                record.scope,
+                                inventory,
+                                &mut loading,
+                                installed_name,
+                            );
                             crate::installations::annotate(
                                 inventory,
                                 start,
@@ -124,7 +135,14 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
                         }
                     } else {
                         let start = inventory.occurrences.len();
-                        inspect(&version, agent, Scope::Unknown, inventory, &mut loading);
+                        inspect(
+                            &version,
+                            agent,
+                            Scope::Unknown,
+                            inventory,
+                            &mut loading,
+                            None,
+                        );
                         let status = if agent == Agent::Claude {
                             if registry.is_some() {
                                 "residual"
@@ -196,7 +214,7 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
                     );
                     continue;
                 }
-                inspect(&child, Agent::Claude, scope, inventory, &mut loading);
+                inspect(&child, Agent::Claude, scope, inventory, &mut loading, None);
             }
         }
     }
@@ -316,6 +334,7 @@ fn inspect(
     scope: Scope,
     inventory: &mut Inventory,
     loading: &mut Budget,
+    installed_name: Option<&str>,
 ) {
     if !loading.candidate() {
         return;
@@ -330,9 +349,12 @@ fn inspect(
             ".codex-plugin/plugin.json"
         })
     };
-    if !manifest
-        .canonicalize()
-        .is_ok_and(|p| root.canonicalize().is_ok_and(|r| p.starts_with(r)))
+    // Only validated installation evidence supplies identity without a manifest.
+    let manifestless = agent == Agent::Claude && installed_name.is_some() && mcp::absent(&manifest);
+    if !manifestless
+        && !manifest
+            .canonicalize()
+            .is_ok_and(|p| root.canonicalize().is_ok_and(|r| p.starts_with(r)))
     {
         mcp::problem(
             inventory,
@@ -343,7 +365,12 @@ fn inspect(
         );
         return;
     }
-    let Ok(value) = loading.json(&manifest) else {
+    let parsed = if manifestless {
+        Ok(serde_json::json!({"name": installed_name.unwrap()}))
+    } else {
+        loading.json(&manifest)
+    };
+    let Ok(value) = parsed else {
         if loading.exhausted {
             return;
         }
@@ -607,12 +634,14 @@ fn skills(
     root_only: bool,
     loading: &mut Budget,
 ) {
-    let mut budget = 1000;
     let mut candidates = if root_only {
         vec![]
     } else {
-        directories(path, agent, inventory, &mut budget, &[])
+        directories(path, agent, inventory, &mut loading.entries, &[])
     };
+    if loading.entries == 0 {
+        loading.exhausted = true;
+    }
     if fs::symlink_metadata(path.join("SKILL.md")).is_ok() {
         candidates.push(path.into());
     }

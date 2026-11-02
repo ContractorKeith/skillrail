@@ -330,6 +330,29 @@ fn sanitize(
     if command.is_some() == url.is_some() {
         return invalid();
     }
+    if agent == Agent::Codex && !plugin {
+        let incompatible: &[&str] = if command.is_some() {
+            &[
+                "http_headers",
+                "env_http_headers",
+                "bearer_token_env_var",
+                "bearer_token",
+                "http_headers_helper",
+                "oauth",
+                "oauth_resource",
+                "auth",
+            ]
+        } else {
+            &["args", "env", "env_vars", "cwd", "bearer_token"]
+        };
+        if incompatible.iter().any(|key| map.contains_key(*key))
+            || map
+                .get("startup_timeout_ms")
+                .is_some_and(|v| v.as_u64().is_none())
+        {
+            return invalid();
+        }
+    }
     if agent == Agent::Claude
         && url.is_some()
         && (kind.is_none() || kind == Some("streamable-http"))
