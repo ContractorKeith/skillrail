@@ -341,6 +341,19 @@ fn require_complete_skill_scan(
             }
         }
     }
+    // Plugin skills are added after standalone root completeness is computed.
+    // Their incomplete fingerprints can hide references to an owned snapshot.
+    if inventory.occurrences.iter().any(|o| {
+        agents.contains(&o.agent)
+            && o.mcp.is_none()
+            && (o.fingerprint.sha256.is_none()
+                || !o.fingerprint.diagnostics.is_empty()
+                || !o.diagnostics.is_empty())
+    }) {
+        return Err(refused(
+            "A relevant skill occurrence scan is incomplete; resolve its inventory diagnostics before mutation.",
+        ));
+    }
     if inventory.diagnostics.iter().any(|d| {
         d.code == "plugin_budget_exceeded"
             || (d.code == "worktree_fallback_unknown" && agents.contains(&Agent::Claude))

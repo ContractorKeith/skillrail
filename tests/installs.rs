@@ -1430,3 +1430,45 @@ fn destination_capacity_reserves_staging_without_stranding_recovery() {
         }
     }
 }
+
+#[test]
+fn incomplete_plugin_skill_fingerprint_preserves_snapshot_consumer() {
+    let f = Fixture::new();
+    let a = app(&f);
+    let mut r = request(&f);
+    r.agents = vec!["codex".into()];
+    let p = a.plan_install(r).unwrap();
+    let op = a.apply(&p).unwrap().operation_id;
+    let plugin = f.path("home/.claude/plugins/cache/market/plug/1.0.0");
+    fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+    fs::write(
+        plugin.join(".claude-plugin/plugin.json"),
+        r#"{"name":"plug"}"#,
+    )
+    .unwrap();
+    let external = plugin.join("skills/external");
+    fs::create_dir_all(&external).unwrap();
+    fs::write(
+        external.join("SKILL.md"),
+        "---\nname: external\ndescription: external\n---\n",
+    )
+    .unwrap();
+    let reference = external.join("reference");
+    std::os::unix::fs::symlink(p.view().files[0].join("SKILL.md"), &reference).unwrap();
+    let inventory = a.scan().unwrap();
+    let occurrence = inventory
+        .occurrences
+        .iter()
+        .find(|o| o.original_path == external)
+        .unwrap();
+    assert!(occurrence.fingerprint.sha256.is_none());
+    assert!(
+        a.plan_undo(&op).is_err(),
+        "incomplete plugin consumer authorized deletion"
+    );
+    assert!(p.view().files[0].exists());
+    assert!(reference.exists());
+    fs::remove_file(reference).unwrap();
+    a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+    assert!(!p.view().files[0].exists());
+}
