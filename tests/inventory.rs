@@ -477,7 +477,14 @@ fn metadata_limits_and_unsupported_layouts_do_not_hide_other_skills() {
         "[remote \"origin\"]\nurl = ssh://user:SECRET_CANARY@host/repo\n",
     );
     let result = scan(p);
-    assert_eq!(result["items"].as_array().unwrap().len(), 2);
+    assert_eq!(result["items"].as_array().unwrap().len(), 3);
+    assert!(
+        result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["name"] == "plugin" && i["source"]["owner"] == "native_plugin")
+    );
     let large = result["occurrences"]
         .as_array()
         .unwrap()

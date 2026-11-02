@@ -88,25 +88,36 @@ values and additive fields. M1 skill IDs, fingerprints and visibility facts are
 unchanged; the discovery coverage label and human headings now describe mixed
 inventory.
 
-Every occurrence adds `origin`, nullable `mcp`, and `capability`:
+Every occurrence adds `origin`, nullable `mcp`, `capability` and `observations`:
 
-- `origin.kind` is `standalone` or `plugin`. Plugin origins include the observed
-  cache `root`, `manifest`, and `configured_status` of a matching user activation
-  rule (`enabled`, `disabled`, `invalid`, `unknown`). A rule does not select a
-  cached version. Cache installation scope remains `unknown`; skills-directory occurrences
-  retain their user/project location scope. Trusted-project or
-  malformed settings make rule interpretation unknown. Nothing is toggled.
-- `mcp` has `configured_status` and `transport` (`stdio`, `http`, `sse`,
-  `websocket`, `unknown`). Supported definitions default to `enabled`, Codex
-  `enabled=false` is `disabled`, malformed supported fields are `invalid`, and
-  unsupported schemas are `unknown`. This is a structural observation of that
-  definition, not complete native validation, resolved precedence or health.
-  Plugin MCP observes the manifest definition plus supported user per-server
-  overrides; it remains separate from plugin activation. Runtime `visibility`
-  stays `unknown` with reasons. Unsupported declaration ordering makes final
-  plugin MCP status unknown.
-- `capability` contains `toggle:false` and a reason explaining the read-only M2
-  surface and native plugin ownership. Supported mutations belong to M4.
+- `origin.kind` is `standalone` or `plugin`. Plugin origins retain `root`,
+  `manifest`, validated `namespace`, and `configured_status` summarizing known
+  activation observations (`enabled`, `disabled`, `invalid`, `unknown`).
+- Plugin `origin.installation` has `status` (`selected`, `residual`, `unknown`),
+  optional version and evidence path. Supported Claude v2 install records give
+  selected user/project/local scope; unrelated-project records do not apply.
+  Codex store-version selection follows the pinned native algorithm, while
+  installation scope stays unknown. A cache version and activation rule are
+  separate facts; neither proves runtime visibility.
+- `observations` is a list of source-path/scope/setting/status/fixed-reason
+  records. Known user facts survive unrelated project configuration. Conflicts
+  summarize as unknown without dropping either observation. Malformed supported
+  settings are invalid; unsupported policy schemas are unknown. Claude persisted
+  project opt-outs and MCP-JSON rejection/approval lists remain separate settings.
+- `mcp` retains configured status and transport (`stdio`, `http`, `sse`,
+  `websocket`, `unknown`). Supported definitions default on; known supported
+  disables change the status to disabled. Unsupported declarations and truncated
+  plugin loading make final status unknown. This describes local configuration,
+  not complete native validation, effective trust/precedence or health.
+- `capability` retains `toggle:false` and the read-only/native-ownership reason.
+  Supported mutations belong to M4. Runtime `visibility` remains unknown.
+
+Root Claude plugin `SKILL.md` fallback retains native ownership, with one
+occurrence per applicable scope. Unrelated plugin folders are not enumerated;
+the fallback's full-folder fingerprint is explicitly unknown. All installation
+and layer facts appear in the shared human formatter/TUI and sanitized cache.
+See compatibility for exact evidence, cumulative loader budgets, conservative
+duplicate-key rejection and unresolved native behaviors.
 
 MCP item identity includes agent, scope, original configuration path, selector
 and server key. Names, command equality and URL equality never join servers.

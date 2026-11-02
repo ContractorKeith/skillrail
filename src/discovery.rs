@@ -61,6 +61,7 @@ pub struct Occurrence {
     pub origin: crate::mcp_inventory::Origin,
     pub mcp: Option<crate::mcp_inventory::Mcp>,
     pub capability: crate::mcp_inventory::Capability,
+    pub observations: Vec<crate::layers::Observation>,
 }
 #[derive(Deserialize)]
 pub(crate) struct Metadata {
@@ -265,7 +266,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             {
                 inventory.diagnostics.push(diagnostic(
                     "plugin_deferred",
-                    "A skills-directory plugin is excluded from standalone skill discovery; the plugin adapter observes supported components separately. Root SKILL.md without declared skills is unsupported.",
+                    "A skills-directory plugin is excluded from standalone skill discovery; the plugin adapter observes supported components separately. Root SKILL.md fallback is handled by the plugin adapter.",
                 ));
                 continue;
             }
@@ -414,6 +415,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 origin: crate::mcp_inventory::Origin::Standalone,
                 mcp: None,
                 capability: crate::mcp_inventory::Capability::standalone_skill(),
+                observations: vec![],
             });
         }
     }
@@ -446,16 +448,15 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             .or_default()
             .insert(occurrence.item_id.clone());
     }
+    let mut grouped: BTreeMap<&str, Vec<&Occurrence>> = BTreeMap::new();
+    for o in &inventory.occurrences {
+        grouped.entry(&o.item_id).or_default().push(o);
+    }
     for item in &mut inventory.items {
-        item.name_collision = inventory
-            .occurrences
+        let occurrences = &grouped[item.id.as_str()];
+        item.name_collision = occurrences
             .iter()
-            .any(|o| o.item_id == item.id && names[&(item.kind, o.name.clone())].len() > 1);
-        let occurrences: Vec<_> = inventory
-            .occurrences
-            .iter()
-            .filter(|o| o.item_id == item.id)
-            .collect();
+            .any(|o| names[&(item.kind, o.name.clone())].len() > 1);
         let sources: BTreeSet<_> = occurrences
             .iter()
             .filter_map(|o| o.canonical_path.as_ref())
@@ -507,7 +508,10 @@ fn confirmed_absent(path: &Path) -> bool {
 }
 
 pub(crate) fn metadata(path: &Path) -> Result<Metadata, ()> {
-    let text = files::text(&path.join("SKILL.md"), 64 * 1024)?;
+    metadata_with_limit(path, 64 * 1024)
+}
+pub(crate) fn metadata_with_limit(path: &Path, limit: u64) -> Result<Metadata, ()> {
+    let text = files::text(&path.join("SKILL.md"), limit)?;
     let mut lines = text.lines();
     if lines.next() != Some("---") {
         return Err(());

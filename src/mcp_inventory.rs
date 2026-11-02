@@ -21,9 +21,11 @@ pub enum Origin {
         root: PathBuf,
         manifest: PathBuf,
         configured_status: ConfiguredStatus,
+        installation: crate::installations::Installation,
+        namespace: Option<String>,
     },
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfiguredStatus {
     Enabled,
@@ -76,6 +78,14 @@ pub(super) fn problem(
     agent: Agent,
     scope: Scope,
 ) {
+    if inventory.diagnostics.iter().any(|d| {
+        d.code == code
+            && d.location
+                .as_ref()
+                .is_some_and(|l| l.path == path && l.agent == agent && l.scope == scope)
+    }) {
+        return;
+    }
     inventory.diagnostics.push(Diagnostic {
         code: code.into(),
         message: "Configuration is malformed, inaccessible, over budget or unsupported; raw values and parser errors were discarded.".into(),
@@ -83,7 +93,7 @@ pub(super) fn problem(
     });
 }
 pub(super) fn json(path: &Path) -> Result<Value, ()> {
-    serde_json::from_str(&files::text(path, 128 * 1024)?).map_err(|_| ())
+    crate::json_config::parse(&files::text(path, 128 * 1024)?)
 }
 pub(super) fn config(path: &Path, agent: Agent) -> Result<Value, ()> {
     if agent == Agent::Claude {
@@ -289,10 +299,10 @@ pub(super) fn add_server(
     inventory.occurrences.push(Occurrence {
         id: format!("occurrence-{id}"), item_id: id, name, invocations: vec![], agent, scope,
         original_path: path.into(), canonical_path: path.canonicalize().ok().filter(|p| p.to_str().is_some()),
-        visibility: Visibility { status: "unknown", reasons: vec![reason.into(), "Configured status describes this entry only, not session loading or health. Trust, policy, CLI overrides and configuration precedence remain unresolved; entries are never merged by name.".into(), if agent == Agent::Claude { "Documented Claude precedence: local > project > user > plugin. Project approvals and session opt-outs are not evaluated.".into() } else { "Codex trusted-project configuration can override user configuration; profiles, managed policy and runtime trust are not resolved.".into() }] },
+        visibility: Visibility { status: "unknown", reasons: vec![reason.into(), "Configured status describes this entry only, not session loading or health. Trust, policy, CLI overrides and configuration precedence remain unresolved; entries are never merged by name.".into(), if agent == Agent::Claude { "Documented Claude precedence: local > project > user > plugin. Supported persisted choices and settings are recorded separately; effective approvals, trust and policy remain unresolved.".into() } else { "Codex trusted-project configuration can override user configuration; profiles, managed policy and runtime trust are not resolved.".into() }] },
         fingerprint: Fingerprint { algorithm: "not_applicable", sha256: None, diagnostics: vec![] }, diagnostics: vec![],
-        origin: plugin.map(|(root, manifest)| Origin::Plugin { root: root.into(), manifest: manifest.into(), configured_status: ConfiguredStatus::Unknown }).unwrap_or(Origin::Standalone),
-        mcp: Some(Mcp { configured_status: status, transport }), capability: Capability::mcp(plugin.is_some()),
+        origin: plugin.map(|(root, manifest)| Origin::Plugin { root: root.into(), manifest: manifest.into(), configured_status: ConfiguredStatus::Unknown, installation: crate::installations::Installation::unknown(), namespace: None }).unwrap_or(Origin::Standalone),
+        mcp: Some(Mcp { configured_status: status, transport }), capability: Capability::mcp(plugin.is_some()), observations: vec![],
     });
 }
 fn sanitize(
@@ -368,13 +378,40 @@ fn sanitize(
             return invalid();
         }
     }
-    for key in ["args", "env_vars", "enabled_tools", "disabled_tools"] {
+    for key in ["args", "enabled_tools", "disabled_tools", "scopes"] {
         if map
             .get(key)
             .is_some_and(|v| !v.as_array().is_some_and(|a| a.iter().all(Value::is_string)))
         {
             return invalid();
         }
+    }
+    if let Some(values) = map.get("env_vars") {
+        let Some(values) = values.as_array() else {
+            return invalid();
+        };
+        for value in values {
+            if value.is_string() {
+                continue;
+            }
+            let Some(fields) = value.as_object() else {
+                return invalid();
+            };
+            if !fields.get("name").is_some_and(Value::is_string)
+                || fields.keys().any(|k| k != "name" && k != "source")
+                || fields
+                    .get("source")
+                    .is_some_and(|s| !matches!(s.as_str(), Some("local" | "remote")))
+            {
+                return invalid();
+            }
+        }
+    }
+    if map
+        .get("default_tools_approval_mode")
+        .is_some_and(|v| !matches!(v.as_str(), Some("auto" | "prompt" | "writes" | "approve")))
+    {
+        return invalid();
     }
     for key in ["env", "headers", "http_headers", "env_http_headers"] {
         if map.get(key).is_some_and(|v| {

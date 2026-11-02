@@ -87,12 +87,26 @@ pub fn details(inventory: &Inventory, selected: usize) -> String {
                 root,
                 manifest,
                 configured_status,
+                installation,
+                ..
             } => text.push_str(&format!(
-                "Origin: plugin | configured rule: {}\nPlugin root: {}\nManifest: {}\n",
+                "Origin: plugin | configured rule: {}\nInstallation: {} | Version: {}\nInstallation evidence: {}\nPlugin root: {}\nManifest: {}\n",
                 configured_status.as_str(),
+                installation.status,
+                safe(installation.version.as_deref().unwrap_or("unknown")),
+                installation.evidence_path.as_ref().map(|p|safe(&p.to_string_lossy())).unwrap_or_else(||"native store selection or unresolved".into()),
                 safe(&root.to_string_lossy()),
                 safe(&manifest.to_string_lossy())
             )),
+        }
+        for observation in &occurrence.observations {
+            text.push_str(&format!(
+                "Observation: {} {:?} {} [{}]\n",
+                observation.setting,
+                observation.scope,
+                observation.status.as_str(),
+                safe(&observation.source_path.to_string_lossy())
+            ));
         }
         for invocation in &occurrence.invocations {
             text.push_str(&format!(

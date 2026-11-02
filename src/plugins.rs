@@ -13,18 +13,147 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+pub(crate) struct Budget {
+    candidates: usize,
+    declarations: usize,
+    entries: usize,
+    reads: usize,
+    bytes: u64,
+    exhausted: bool,
+}
+impl Budget {
+    fn new() -> Self {
+        Self {
+            candidates: 128,
+            declarations: 256,
+            entries: 1000,
+            reads: 256,
+            bytes: 1024 * 1024,
+            exhausted: false,
+        }
+    }
+    fn take(counter: &mut usize, exhausted: &mut bool) -> bool {
+        if *counter == 0 {
+            *exhausted = true;
+            false
+        } else {
+            *counter -= 1;
+            true
+        }
+    }
+    fn candidate(&mut self) -> bool {
+        !self.exhausted && Self::take(&mut self.candidates, &mut self.exhausted)
+    }
+    fn declaration(&mut self) -> bool {
+        !self.exhausted && Self::take(&mut self.declarations, &mut self.exhausted)
+    }
+    fn entry(&mut self) -> bool {
+        !self.exhausted && Self::take(&mut self.entries, &mut self.exhausted)
+    }
+    fn charge(&mut self, path: &Path) -> Result<u64, ()> {
+        if self.exhausted || !Self::take(&mut self.reads, &mut self.exhausted) {
+            return Err(());
+        }
+        let len = fs::symlink_metadata(path).map_err(|_| ())?.len();
+        if len > self.bytes {
+            self.exhausted = true;
+            return Err(());
+        }
+        self.bytes -= len;
+        Ok(len)
+    }
+    pub(crate) fn exhausted(&self) -> bool {
+        self.exhausted
+    }
+    pub(crate) fn json(&mut self, path: &Path) -> Result<Value, ()> {
+        let limit = self.charge(path)?.min(128 * 1024);
+        crate::json_config::parse(&files::text(path, limit)?)
+    }
+}
+
 pub fn discover(paths: &Paths, inventory: &mut Inventory) {
+    let mut loading = Budget::new();
+    let registry = crate::installations::claude(paths, inventory, &mut loading);
     for (agent, root) in [
         (Agent::Claude, paths.home.join(".claude/plugins/cache")),
         (Agent::Codex, paths.home.join(".codex/plugins/cache")),
     ] {
         let mut budget = 1000;
-        for market in directories(&root, agent, inventory, &mut budget) {
-            for plugin in directories(&market, agent, inventory, &mut budget) {
-                for version in directories(&plugin, agent, inventory, &mut budget) {
-                    inspect(&version, agent, Scope::Unknown, inventory);
+        for market in directories(&root, agent, inventory, &mut budget, &[]) {
+            if budget == 0 {
+                loading.exhausted = true;
+                break;
+            }
+            for plugin in directories(&market, agent, inventory, &mut budget, &[]) {
+                if budget == 0 {
+                    loading.exhausted = true;
+                    break;
+                }
+                if agent == Agent::Codex {
+                    crate::installations::codex_metadata(&plugin, inventory, &mut loading);
+                }
+                let versions = directories(
+                    &plugin,
+                    agent,
+                    inventory,
+                    &mut budget,
+                    registry.as_deref().unwrap_or(&[]),
+                );
+                let active = if agent == Agent::Codex && budget > 0 {
+                    crate::installations::codex_active(&versions)
+                } else {
+                    None
+                };
+                for version in versions {
+                    let selected: Vec<_> = registry
+                        .iter()
+                        .flatten()
+                        .filter(|r| r.path == version)
+                        .collect();
+                    if agent == Agent::Claude && !selected.is_empty() {
+                        for record in selected {
+                            let start = inventory.occurrences.len();
+                            inspect(&version, agent, record.scope, inventory, &mut loading);
+                            crate::installations::annotate(
+                                inventory,
+                                start,
+                                "selected",
+                                Some(record.version.clone()),
+                                Some(paths.home.join(".claude/plugins/installed_plugins.json")),
+                            );
+                        }
+                    } else {
+                        let start = inventory.occurrences.len();
+                        inspect(&version, agent, Scope::Unknown, inventory, &mut loading);
+                        let status = if agent == Agent::Claude {
+                            if registry.is_some() {
+                                "residual"
+                            } else {
+                                "unknown"
+                            }
+                        } else if active.is_none() {
+                            "unknown"
+                        } else if active.as_ref() == Some(&version) {
+                            "selected"
+                        } else {
+                            "residual"
+                        };
+                        crate::installations::annotate(
+                            inventory,
+                            start,
+                            status,
+                            version
+                                .file_name()
+                                .and_then(|v| v.to_str())
+                                .map(str::to_owned),
+                            None,
+                        );
+                    }
                 }
             }
+        }
+        if budget == 0 {
+            loading.exhausted = true;
         }
     }
     // Claude also documents plugins installed in its skills directory.
@@ -67,17 +196,28 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
                     );
                     continue;
                 }
-                inspect(&child, Agent::Claude, scope, inventory);
+                inspect(&child, Agent::Claude, scope, inventory, &mut loading);
             }
         }
     }
-    observations(paths, inventory);
+    if loading.exhausted {
+        inventory.diagnostics.push(crate::Diagnostic{code:"plugin_budget_exceeded".into(),message:"Plugin loading is partial: cumulative candidate, declaration, entry, file-read or byte budget exceeded; final plugin precedence/status is unknown.".into(),location:None});
+        for o in &mut inventory.occurrences {
+            if matches!(o.origin, Origin::Plugin { .. })
+                && let Some(mcp) = &mut o.mcp
+            {
+                mcp.configured_status = mcp::ConfiguredStatus::Unknown;
+            }
+        }
+    }
+    crate::layers::discover(paths, inventory);
 }
 fn directories(
     path: &Path,
     agent: Agent,
     inventory: &mut Inventory,
     budget: &mut usize,
+    installed: &[crate::installations::Record],
 ) -> Vec<PathBuf> {
     if mcp::absent(path) {
         return vec![];
@@ -116,6 +256,12 @@ fn directories(
         }
         *budget -= 1;
         match entry {
+            Ok(e)
+                if e.file_type().is_ok_and(|t| t.is_symlink())
+                    && installed.iter().any(|r| r.path == e.path()) =>
+            {
+                result.push(e.path())
+            }
             Ok(e) if e.path().to_str().is_some() && e.file_type().is_ok_and(|t| t.is_dir()) => {
                 result.push(e.path())
             }
@@ -164,7 +310,16 @@ fn strings(value: &Value) -> Option<Vec<&str>> {
     }
     value.as_array()?.iter().map(Value::as_str).collect()
 }
-fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
+fn inspect(
+    root: &Path,
+    agent: Agent,
+    scope: Scope,
+    inventory: &mut Inventory,
+    loading: &mut Budget,
+) {
+    if !loading.candidate() {
+        return;
+    }
     let portable = agent == Agent::Codex && !mcp::absent(&root.join("plugin.json"));
     let manifest = if portable {
         root.join("plugin.json")
@@ -182,13 +337,16 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
         mcp::problem(
             inventory,
             "plugin_manifest_unknown",
-            &root.join("plugin.json"),
+            &manifest,
             agent,
             scope,
         );
         return;
     }
-    let Ok(value) = mcp::json(&manifest) else {
+    let Ok(value) = loading.json(&manifest) else {
+        if loading.exhausted {
+            return;
+        }
         mcp::problem(
             inventory,
             "plugin_manifest_unknown",
@@ -198,7 +356,14 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
         );
         return;
     };
-    if !value.is_object() || !value.get("name").is_some_and(Value::is_string) {
+    if !value.is_object()
+        || !value.get("name").and_then(Value::as_str).is_some_and(|n| {
+            !n.is_empty()
+                && n.len() <= 128
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        })
+    {
         mcp::problem(
             inventory,
             "plugin_manifest_unknown",
@@ -208,6 +373,7 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
         );
         return;
     }
+    let start = inventory.occurrences.len();
     let mut skill_roots = BTreeSet::new();
     if agent == Agent::Claude || portable || value.get("skills").is_none() {
         skill_roots.insert(root.join("skills"));
@@ -215,6 +381,9 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
     if !portable && let Some(paths) = value.get("skills") {
         if let Some(paths) = strings(paths) {
             for text in paths {
+                if !loading.declaration() {
+                    break;
+                }
                 if let Some(path) = component(root, text) {
                     skill_roots.insert(path);
                 } else {
@@ -237,8 +406,22 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
             );
         }
     }
+    if agent == Agent::Claude
+        && value.get("skills").is_none()
+        && mcp::absent(&root.join("skills"))
+        && !mcp::absent(&root.join("SKILL.md"))
+    {
+        skills(
+            root, &manifest, root, agent, scope, inventory, true, loading,
+        );
+    }
     for path in skill_roots {
-        skills(root, &manifest, &path, agent, scope, inventory);
+        if loading.exhausted {
+            break;
+        }
+        skills(
+            root, &manifest, &path, agent, scope, inventory, false, loading,
+        );
     }
     let mut entries = BTreeMap::new();
     let default = root.join(if portable { "mcp.json" } else { ".mcp.json" });
@@ -250,6 +433,7 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
         &mut entries,
         &mut incomplete,
         true,
+        loading,
     );
     if !portable && let Some(declared) = value.get("mcpServers") {
         load_declared(
@@ -260,6 +444,7 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
             inventory,
             &mut entries,
             &mut incomplete,
+            loading,
         );
     }
     if portable {
@@ -288,7 +473,12 @@ fn inspect(root: &Path, agent: Agent, scope: Scope, inventory: &mut Inventory) {
             o.visibility.reasons.push("A component was unsupported; declaration precedence and final configured status are unknown.".into());
         }
         if let Some(o) = inventory.occurrences.last_mut() {
-            o.visibility.reasons.push("Plugin contents observed on disk: cache selection and activation remain unknown; skills-directory scope follows its location. Native lifecycle is unchanged.".into());
+            o.visibility.reasons.push("Plugin components observed on disk; installation selection and activation observations are reported separately. Native lifecycle is unchanged.".into());
+        }
+    }
+    for o in &mut inventory.occurrences[start..] {
+        if let Origin::Plugin { namespace, .. } = &mut o.origin {
+            *namespace = value.get("name").and_then(Value::as_str).map(str::to_owned);
         }
     }
 }
@@ -300,6 +490,7 @@ fn merge(
     inventory: &mut Inventory,
     entries: &mut Entries,
     incomplete: &mut bool,
+    loading: &mut Budget,
 ) {
     let Some(map) = value.as_object().filter(|m| m.len() <= 1000) else {
         *incomplete = true;
@@ -307,6 +498,10 @@ fn merge(
         return;
     };
     for (name, entry) in map {
+        if !loading.entry() {
+            *incomplete = true;
+            break;
+        }
         entries.insert(name.clone(), (entry.clone(), path.into()));
     }
 }
@@ -317,11 +512,16 @@ fn load_mcp(
     entries: &mut Entries,
     incomplete: &mut bool,
     require_wrapper: bool,
+    loading: &mut Budget,
 ) {
+    if loading.exhausted {
+        *incomplete = true;
+        return;
+    }
     if mcp::absent(path) {
         return;
     }
-    match mcp::json(path) {
+    match loading.json(path) {
         Ok(value) if value.get("mcpServers").is_some() => merge(
             &value["mcpServers"],
             path,
@@ -329,16 +529,20 @@ fn load_mcp(
             inventory,
             entries,
             incomplete,
+            loading,
         ),
         Ok(value) if !require_wrapper && value.is_object() => {
-            merge(&value, path, agent, inventory, entries, incomplete)
+            merge(&value, path, agent, inventory, entries, incomplete, loading)
         }
         _ => {
             *incomplete = true;
-            mcp::problem(inventory, "plugin_mcp_unknown", path, agent, Scope::Unknown);
+            if !loading.exhausted {
+                mcp::problem(inventory, "plugin_mcp_unknown", path, agent, Scope::Unknown);
+            }
         }
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn load_declared(
     root: &Path,
     manifest: &Path,
@@ -347,16 +551,26 @@ fn load_declared(
     inventory: &mut Inventory,
     entries: &mut Entries,
     incomplete: &mut bool,
+    loading: &mut Budget,
 ) {
+    if !loading.declaration() {
+        *incomplete = true;
+        return;
+    }
     if let Some(array) = value.as_array().filter(|a| a.len() <= 1000) {
         for v in array {
-            load_declared(root, manifest, v, agent, inventory, entries, incomplete);
+            if loading.exhausted {
+                break;
+            }
+            load_declared(
+                root, manifest, v, agent, inventory, entries, incomplete, loading,
+            );
         }
     } else if let Some(text) = value.as_str() {
         if let Some(path) =
             component(root, text).filter(|p| p.extension().is_some_and(|s| s == "json"))
         {
-            load_mcp(&path, agent, inventory, entries, incomplete, false);
+            load_mcp(&path, agent, inventory, entries, incomplete, false, loading);
         } else {
             *incomplete = true;
             mcp::problem(
@@ -368,7 +582,9 @@ fn load_declared(
             );
         }
     } else if value.is_object() {
-        merge(value, manifest, agent, inventory, entries, incomplete);
+        merge(
+            value, manifest, agent, inventory, entries, incomplete, loading,
+        );
     } else {
         *incomplete = true;
         mcp::problem(
@@ -380,6 +596,7 @@ fn load_declared(
         );
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn skills(
     root: &Path,
     manifest: &Path,
@@ -387,13 +604,22 @@ fn skills(
     agent: Agent,
     scope: Scope,
     inventory: &mut Inventory,
+    root_only: bool,
+    loading: &mut Budget,
 ) {
     let mut budget = 1000;
-    let mut candidates = directories(path, agent, inventory, &mut budget);
+    let mut candidates = if root_only {
+        vec![]
+    } else {
+        directories(path, agent, inventory, &mut budget, &[])
+    };
     if fs::symlink_metadata(path.join("SKILL.md")).is_ok() {
         candidates.push(path.into());
     }
     for original in candidates {
+        if !loading.entry() {
+            break;
+        }
         if mcp::absent(&original.join("SKILL.md")) {
             continue;
         }
@@ -410,7 +636,12 @@ fn skills(
             );
             continue;
         }
-        let metadata = crate::discovery::metadata(&original).ok();
+        let limit = match loading.charge(&original.join("SKILL.md")) {
+            Ok(limit) => limit.min(64 * 1024),
+            Err(()) if loading.exhausted => break,
+            Err(()) => 0,
+        };
+        let metadata = crate::discovery::metadata_with_limit(&original, limit).ok();
         let valid = metadata.as_ref().is_some_and(|m| {
             agent == Agent::Claude || (m.name.is_some() && m.description.is_some())
         });
@@ -436,138 +667,33 @@ fn skills(
         }
         let occurrence_id = format!(
             "occurrence-{}",
-            files::id(&[&format!("{agent:?}"), &original.to_string_lossy()])
+            files::id(&[&format!("{agent:?}/{scope:?}"), &original.to_string_lossy()])
         );
         if inventory.occurrences.iter().any(|o| o.id == occurrence_id) {
             continue;
         }
-        inventory.occurrences.push(Occurrence { id: occurrence_id, item_id: id, name: name.clone(), invocations: vec![], agent, scope, original_path: original, canonical_path: canonical.clone(), visibility: Visibility { status: "unknown", reasons: vec!["Plugin-owned skill observed on disk. Cache installation scope/version selection or skills-directory activation, namespace, precedence and runtime trust remain unresolved.".into()] }, fingerprint: fingerprint::fingerprint(canonical.as_ref().unwrap()), diagnostics: if valid { vec![] } else { vec!["metadata_invalid: plugin skill metadata is incomplete or unsupported".into()] }, origin: Origin::Plugin { root: root.into(), manifest: manifest.into(), configured_status: mcp::ConfiguredStatus::Unknown }, mcp: None, capability: Capability { toggle: false, reason: "M2 is read-only; plugin skill visibility and lifecycle remain owned by the native agent." } });
-    }
-}
-
-// These are observations of local rules, never claims about a selected cache version.
-fn observations(paths: &Paths, inventory: &mut Inventory) {
-    for agent in [Agent::Claude, Agent::Codex] {
-        let config_path = paths.home.join(if agent == Agent::Claude {
-            ".claude/settings.json"
+        let fingerprint = if root_only {
+            crate::fingerprint::Fingerprint {
+                algorithm: "not_applicable",
+                sha256: None,
+                diagnostics: vec![
+                    "Root fallback fingerprint unknown: unrelated plugin content is not traversed."
+                        .into(),
+                ],
+            }
         } else {
-            ".codex/config.toml"
-        });
-        let user = if mcp::absent(&config_path) {
-            Ok(Value::Object(Default::default()))
-        } else {
-            mcp::config(&config_path, agent)
+            fingerprint::fingerprint_with_budget(
+                canonical.as_ref().unwrap(),
+                &mut loading.bytes,
+                &mut loading.entries,
+            )
         };
-        let project_present = crate::discovery::project_ancestors(&paths.project)
-            .iter()
-            .any(|p| {
-                if agent == Agent::Codex {
-                    !mcp::absent(&p.join(".codex/config.toml"))
-                } else {
-                    !mcp::absent(&p.join(".claude/settings.json"))
-                        || !mcp::absent(&p.join(".claude/settings.local.json"))
-                }
-            });
-        let rule_key = if agent == Agent::Claude {
-            "enabledPlugins"
-        } else {
-            "plugins"
-        };
-        let valid = user
-            .as_ref()
-            .is_ok_and(|v| v.is_object() && v.get(rule_key).is_none_or(Value::is_object));
-        if !valid {
-            mcp::problem(
-                inventory,
-                "plugin_settings_unknown",
-                &config_path,
-                agent,
-                Scope::User,
-            );
-        }
-        for occurrence in inventory
-            .occurrences
-            .iter_mut()
-            .filter(|o| o.agent == agent)
+        if fingerprint.sha256.is_none()
+            && !root_only
+            && (loading.bytes == 0 || loading.entries == 0)
         {
-            let Origin::Plugin {
-                root,
-                configured_status,
-                ..
-            } = &mut occurrence.origin
-            else {
-                continue;
-            };
-            let cache = paths.home.join(if agent == Agent::Claude {
-                ".claude/plugins/cache"
-            } else {
-                ".codex/plugins/cache"
-            });
-            if !root
-                .strip_prefix(cache)
-                .is_ok_and(|p| p.components().count() == 3)
-            {
-                continue;
-            }
-            let Some(plugin) = root
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|p| p.to_str())
-            else {
-                continue;
-            };
-            let Some(market) = root
-                .parent()
-                .and_then(|p| p.parent())
-                .and_then(|p| p.file_name())
-                .and_then(|p| p.to_str())
-            else {
-                continue;
-            };
-            let key = format!("{plugin}@{market}");
-            if !valid || project_present {
-                occurrence.visibility.reasons.push("Plugin configuration observations are unknown: malformed settings or project trust/precedence could affect the user rule.".into());
-                continue;
-            }
-            let value = user.as_ref().unwrap();
-            let plugin_rule = value.get(rule_key).and_then(|v| v.get(&key));
-            let enabled = if agent == Agent::Claude {
-                plugin_rule
-            } else {
-                plugin_rule.and_then(|v| v.get("enabled"))
-            };
-            if enabled.is_some_and(|v| !v.is_boolean())
-                || (agent == Agent::Codex && plugin_rule.is_some_and(|v| !v.is_object()))
-            {
-                *configured_status = mcp::ConfiguredStatus::Invalid;
-                occurrence.diagnostics.push("plugin_rule_invalid: local activation rule has an unsupported type; raw values were discarded".into());
-                continue;
-            }
-            *configured_status = match enabled.and_then(Value::as_bool) {
-                Some(true) => mcp::ConfiguredStatus::Enabled,
-                Some(false) => mcp::ConfiguredStatus::Disabled,
-                None => mcp::ConfiguredStatus::Unknown,
-            };
-            occurrence.visibility.reasons.push("Plugin configured status observes the matching user rule only; it does not select a cache version or prove activation. Managed/account/session overrides remain unresolved.".into());
-            if agent == Agent::Codex
-                && let Some(server) = plugin_rule
-                    .and_then(|v| v.get("mcp_servers"))
-                    .and_then(|v| v.get(&occurrence.name))
-                && let Some(mcp) = &mut occurrence.mcp
-            {
-                if matches!(
-                    mcp.configured_status,
-                    mcp::ConfiguredStatus::Invalid | mcp::ConfiguredStatus::Unknown
-                ) {
-                    continue;
-                }
-                mcp.configured_status = match server.get("enabled").and_then(Value::as_bool) {
-                    Some(true) => mcp::ConfiguredStatus::Enabled,
-                    Some(false) => mcp::ConfiguredStatus::Disabled,
-                    None => mcp::ConfiguredStatus::Unknown,
-                };
-                occurrence.visibility.reasons.push("Observed user plugin MCP override; effective runtime configuration remains unknown.".into());
-            }
+            loading.exhausted = true;
         }
+        inventory.occurrences.push(Occurrence { id: occurrence_id, item_id: id, name: name.clone(), invocations: vec![], agent, scope, original_path: original, canonical_path: canonical.clone(), visibility: Visibility { status: "unknown", reasons: vec!["Plugin-owned skill observed on disk. Recorded installation/scope and configuration facts do not resolve namespace precedence, runtime trust or session loading.".into()] }, fingerprint, diagnostics: if valid { vec![] } else { vec!["metadata_invalid: plugin skill metadata is incomplete or unsupported".into()] }, origin: Origin::Plugin { root: root.into(), manifest: manifest.into(), configured_status: mcp::ConfiguredStatus::Unknown, installation: crate::installations::Installation::unknown(), namespace: None }, mcp: None, capability: Capability { toggle: false, reason: "M2 is read-only; plugin skill visibility and lifecycle remain owned by the native agent." }, observations: vec![] });
     }
 }

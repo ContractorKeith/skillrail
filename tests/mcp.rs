@@ -580,3 +580,523 @@ fn unsupported_server_keys_are_redacted_instead_of_retained_as_safe_labels() {
     );
     assert!(!result.to_string().contains("CANARY_"));
 }
+
+#[test]
+fn claude_registry_selects_scoped_installations_not_residual_or_other_projects() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/market/demo";
+    for version in ["1.0.0", "2.0.0", "3.0.0"] {
+        write(
+            p,
+            &format!("{base}/{version}/.claude-plugin/plugin.json"),
+            r#"{"name":"demo","mcpServers":{"same":{"command":"never-run"}}}"#,
+        );
+    }
+    let registry = json!({"version":2,"plugins":{"demo@market":[
+        {"scope":"user","installPath":p.join(base).join("2.0.0"),"version":"2.0.0"},
+        {"scope":"project","projectPath":p.join("project").canonicalize().unwrap(),"installPath":p.join(base).join("2.0.0"),"version":"2.0.0"},
+        {"scope":"local","projectPath":p.join("project").canonicalize().unwrap(),"installPath":p.join(base).join("2.0.0"),"version":"2.0.0","gitCommitSha":"CANARY_REGISTRY_SECRET"},
+        {"scope":"local","projectPath":p.join("other"),"installPath":p.join(base).join("3.0.0"),"version":"3.0.0"}
+    ]}});
+    write(
+        p,
+        "home/.claude/plugins/installed_plugins.json",
+        &registry.to_string(),
+    );
+    let result = scan(p);
+    let rows = result["occurrences"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|o| o["origin"]["installation"]["status"] == "selected")
+            .count(),
+        3
+    );
+    assert!(!result.to_string().contains("CANARY_REGISTRY_SECRET"));
+    for scope in ["user", "project", "local"] {
+        assert!(
+            rows.iter()
+                .any(|o| o["scope"] == scope && o["origin"]["installation"]["version"] == "2.0.0")
+        );
+    }
+    assert_eq!(
+        rows.iter()
+            .filter(|o| o["origin"]["installation"]["status"] == "residual")
+            .count(),
+        2
+    );
+    write(
+        p,
+        "home/.claude/plugins/installed_plugins.json",
+        r#"{"version":999,"plugins":{},"CANARY_REGISTRY":"secret"}"#,
+    );
+    let result = scan(p);
+    assert!(
+        result["diagnostics"]
+            .to_string()
+            .contains("plugin_registry_unknown")
+    );
+    assert!(!result.to_string().contains("CANARY_REGISTRY"));
+    assert!(
+        result["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["origin"]["installation"]["status"] == "unknown")
+    );
+    for malformed in [
+        r#"{"version":999,"plugins":{}}"#,
+        r#"{"version":2,"plugins":"CANARY_REGISTRY"}"#,
+        r#"{"version":2,"plugins":{"demo@market":[{"scope":"user","installPath":42,"version":"CANARY_REGISTRY"}]}}"#,
+    ] {
+        write(p, "home/.claude/plugins/installed_plugins.json", malformed);
+        let result = scan(p);
+        assert!(
+            result["diagnostics"]
+                .to_string()
+                .contains("plugin_registry_unknown")
+        );
+        assert!(!result.to_string().contains("CANARY_REGISTRY"));
+    }
+}
+
+#[test]
+fn codex_installation_selection_uses_native_version_order_and_versioned_identity_metadata() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.codex/plugins/cache/market/demo";
+    for version in ["1.9.0", "1.10.0", "1.10.0-rc.1"] {
+        write(
+            p,
+            &format!("{base}/{version}/.codex-plugin/plugin.json"),
+            r#"{"name":"demo","mcpServers":{"same":{"command":"never-run"}}}"#,
+        );
+    }
+    let result = scan(p);
+    let selected = result["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["origin"]["installation"]["status"] == "selected")
+        .unwrap();
+    assert_eq!(selected["origin"]["installation"]["version"], "1.10.0");
+    write(
+        p,
+        &format!("{base}/.codex-remote-plugin-install.json"),
+        r#"{"schema_version":999,"remote_plugin_id":"CANARY_REMOTE"}"#,
+    );
+    let result = scan(p);
+    assert!(
+        result["diagnostics"]
+            .to_string()
+            .contains("plugin_install_metadata_unknown")
+    );
+    assert!(!result.to_string().contains("CANARY_REMOTE"));
+}
+
+#[test]
+fn persisted_claude_choices_retain_source_scope_and_disable_observations() {
+    let root = fixture();
+    let p = root.path();
+    write(p,"home/.claude.json",&json!({"mcpServers":{"personal":{"command":"never"}},"projects":{p.join("project").canonicalize().unwrap().to_str().unwrap():{"disabledMcpServers":["personal"]}}}).to_string());
+    write(
+        p,
+        "project/.mcp.json",
+        r#"{"mcpServers":{"shared":{"command":"never"}}}"#,
+    );
+    write(
+        p,
+        "project/.claude/settings.local.json",
+        r#"{"disabledMcpjsonServers":["shared"],"unrelated":"CANARY_LAYER"}"#,
+    );
+    let result = scan(p);
+    let rows = result["occurrences"].as_array().unwrap();
+    for (name, scope, setting) in [
+        ("personal", "local", "disabledMcpServers"),
+        ("shared", "local", "disabledMcpjsonServers"),
+    ] {
+        let row = rows.iter().find(|o| o["name"] == name).unwrap();
+        assert_eq!(row["mcp"]["configured_status"], "disabled");
+        assert!(
+            row["observations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|o| o["scope"] == scope
+                    && o["setting"] == setting
+                    && o["status"] == "disabled"
+                    && o["source_path"].is_string())
+        );
+        assert_eq!(row["visibility"]["status"], "unknown");
+    }
+    assert!(!result.to_string().contains("CANARY_LAYER"));
+}
+#[test]
+fn codex_plugin_layer_facts_survive_unrelated_and_malformed_project_configuration() {
+    let root = fixture();
+    let p = root.path();
+    write(
+        p,
+        "home/.codex/plugins/cache/m/p/1/.codex-plugin/plugin.json",
+        r#"{"name":"p","mcpServers":{"same":{"command":"never"}}}"#,
+    );
+    write(
+        p,
+        "home/.codex/config.toml",
+        "[plugins.'p@m']\nenabled=true\n[plugins.'p@m'.mcp_servers.same]\nenabled=false\n",
+    );
+    write(p, "project/.codex/config.toml", "model='example'\n");
+    let result = scan(p);
+    let row = &result["occurrences"][0];
+    assert_eq!(row["origin"]["configured_status"], "enabled");
+    assert_eq!(row["mcp"]["configured_status"], "disabled");
+    assert!(
+        row["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["scope"] == "user"
+                && o["setting"] == "plugin_mcp_enabled"
+                && o["status"] == "disabled")
+    );
+    write(
+        p,
+        "project/.codex/config.toml",
+        "[plugins.'p@m']\nmcp_servers='PRIVATE_CANARY'\n",
+    );
+    let result = scan(p);
+    let row = &result["occurrences"][0];
+    assert!(matches!(
+        row["mcp"]["configured_status"].as_str(),
+        Some("unknown" | "invalid")
+    ));
+    assert!(
+        row["diagnostics"]
+            .to_string()
+            .contains("plugin_rule_invalid")
+    );
+    assert!(
+        row["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["scope"] == "user" && o["status"] == "disabled")
+    );
+    assert!(!result.to_string().contains("PRIVATE_CANARY"));
+    assert!(
+        !fs::read(p.join("state/index.sqlite3"))
+            .unwrap()
+            .windows(14)
+            .any(|w| w == b"PRIVATE_CANARY")
+    );
+    let inventory = skillrail::Application::new(
+        skillrail::Paths::resolve(
+            Some(p.join("home")),
+            Some(p.join("project")),
+            Some(p.join("state")),
+        )
+        .unwrap(),
+    )
+    .scan()
+    .unwrap();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(200, 100)).unwrap();
+    terminal
+        .draw(|f| skillrail::tui::render_selection(f, &inventory, 0, 0))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(!text.contains("PRIVATE_CANARY"));
+    assert!(text.contains("plugin_rule_invalid"));
+    for malformed in [
+        "[plugins.'p@m'.mcp_servers]\nsame='PRIVATE_CANARY'",
+        "[plugins.'p@m'.mcp_servers.same]\nenabled='PRIVATE_CANARY'",
+        "[plugins.'p@m'.mcp_servers.same]\nenabled_tools=42",
+    ] {
+        write(p, "project/.codex/config.toml", malformed);
+        let result = scan(p);
+        assert_eq!(
+            result["occurrences"][0]["mcp"]["configured_status"],
+            "invalid"
+        );
+        assert!(
+            result["occurrences"][0]["diagnostics"]
+                .to_string()
+                .contains("plugin_rule_invalid")
+        );
+        assert!(!result.to_string().contains("PRIVATE_CANARY"));
+    }
+    write(p, "project/.codex/config.toml", "model='example'");
+    write(
+        p,
+        "home/.codex/config.toml",
+        "[plugins.'p@m']\nenabled=true\nmcp_servers='PRIVATE_CANARY'\n",
+    );
+    let result = scan(p);
+    assert_eq!(
+        result["occurrences"][0]["mcp"]["configured_status"],
+        "invalid"
+    );
+    assert!(
+        result["occurrences"][0]["diagnostics"]
+            .to_string()
+            .contains("plugin_rule_invalid")
+    );
+    assert!(!result.to_string().contains("PRIVATE_CANARY"));
+}
+
+#[test]
+fn claude_root_plugin_skill_is_one_owned_occurrence_without_child_traversal() {
+    let root = fixture();
+    let p = root.path();
+    for base in [
+        "home/.claude/skills/p",
+        "project/.claude/skills/p",
+        "home/.claude/plugins/cache/m/p/1",
+    ] {
+        write(
+            p,
+            &format!("{base}/.claude-plugin/plugin.json"),
+            r#"{"name":"p"}"#,
+        );
+        write(
+            p,
+            &format!("{base}/SKILL.md"),
+            "---\nname: root-skill\ndescription: Fixture\n---\n",
+        );
+        write(
+            p,
+            &format!("{base}/unrelated/SKILL.md"),
+            "---\nname: unexpected-child\ndescription: Must not be enumerated\n---\n",
+        );
+    }
+    let result = scan(p);
+    let rows = result["occurrences"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows.iter()
+            .all(|o| o["name"] == "root-skill" && o["origin"]["kind"] == "plugin")
+    );
+    assert!(
+        result["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["source"]["owner"] == "native_plugin")
+    );
+    write(
+        p,
+        "home/.claude/skills/p/.claude-plugin/plugin.json",
+        r#"{"name":"p","skills":[]}"#,
+    );
+    assert_eq!(scan(p)["occurrences"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn codex_documented_field_forms_validate_without_exposing_environment_selectors() {
+    let root = fixture();
+    let p = root.path();
+    for (fields, status) in [
+        ("default_tools_approval_mode='banana'", "invalid"),
+        ("scopes=42", "invalid"),
+        (
+            "env_vars=[{name='CANARY_ENV_NAME',source='local'}]",
+            "enabled",
+        ),
+        (
+            "env_vars=[{name='CANARY_ENV_NAME',source='remote'}]",
+            "enabled",
+        ),
+        (
+            "env_vars=[{name='CANARY_ENV_NAME',source='banana'}]",
+            "invalid",
+        ),
+        ("env_vars=[{name=42,source='local'}]", "invalid"),
+        (
+            "env_vars=[{name='CANARY_ENV_NAME',source='local',future='CANARY_EXTRA'}]",
+            "invalid",
+        ),
+        (
+            "default_tools_approval_mode='writes'\nscopes=['CANARY_SCOPE']",
+            "enabled",
+        ),
+    ] {
+        write(
+            p,
+            "home/.codex/config.toml",
+            &format!("[mcp_servers.same]\ncommand='never'\n{fields}\n"),
+        );
+        let result = scan(p);
+        assert_eq!(
+            result["occurrences"][0]["mcp"]["configured_status"], status,
+            "{fields}"
+        );
+        assert!(!result.to_string().contains("CANARY_"));
+    }
+}
+
+#[test]
+fn plugin_loading_has_cumulative_entry_declaration_and_byte_budgets() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p/1";
+    let mut declarations = vec![];
+    for file in 0..12 {
+        let name = format!("./part{file}.json");
+        declarations.push(name);
+        let entries: serde_json::Map<_, _> = (0..100)
+            .map(|n| {
+                (
+                    format!("server{file}_{n}"),
+                    json!({"command":"never","env":{"X":"CANARY_BUDGET"}}),
+                )
+            })
+            .collect();
+        write(
+            p,
+            &format!("{base}/part{file}.json"),
+            &json!({"mcpServers":entries}).to_string(),
+        );
+    }
+    write(
+        p,
+        &format!("{base}/.claude-plugin/plugin.json"),
+        &json!({"name":"p","mcpServers":declarations}).to_string(),
+    );
+    let before = snapshot(p);
+    let result = scan(p);
+    assert!(result["items"].as_array().unwrap().len() <= 1000);
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "plugin_budget_exceeded")
+    );
+    assert!(
+        result["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["mcp"]["configured_status"] == "unknown")
+    );
+    assert_eq!(snapshot(p), before);
+    assert!(!result.to_string().contains("CANARY_BUDGET"));
+    // Repeated empty files and nested arrays consume declarations/reads, not just unique entries.
+    write(p, &format!("{base}/empty.json"), r#"{"mcpServers":{}}"#);
+    write(
+        p,
+        &format!("{base}/.claude-plugin/plugin.json"),
+        &json!({"name":"p","mcpServers":[{"first":{"command":"never"}},vec!["./empty.json";300]]})
+            .to_string(),
+    );
+    let result = scan(p);
+    assert_eq!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "plugin_budget_exceeded")
+            .count(),
+        1
+    );
+    assert_eq!(
+        result["occurrences"][0]["mcp"]["configured_status"],
+        "unknown"
+    );
+}
+
+#[test]
+fn duplicate_configuration_keys_are_unknown_without_guessing_native_precedence() {
+    let root = fixture();
+    let p = root.path();
+    write(
+        p,
+        "project/.mcp.json",
+        r#"{"mcpServers":{"same":{"command":"never"},"same":{"command":"CANARY_DUPLICATE"}}}"#,
+    );
+    let result = scan(p);
+    assert!(result["items"].as_array().unwrap().is_empty());
+    assert!(
+        result["diagnostics"]
+            .to_string()
+            .contains("mcp_config_unknown")
+    );
+    assert!(!result.to_string().contains("CANARY_DUPLICATE"));
+}
+
+#[test]
+fn plugin_read_bytes_and_candidate_limits_apply_across_the_scan() {
+    let root = fixture();
+    let p = root.path();
+    let base = "home/.claude/plugins/cache/m/p/1";
+    let declarations: Vec<_> = (0..12).map(|n| format!("./part{n}.json")).collect();
+    for n in 0..12 {
+        write(p,&format!("{base}/part{n}.json"),&json!({"mcpServers":{format!("server{n}"):{"command":"never","env":{"X":"CANARY_BYTES".repeat(9000)}}}}).to_string());
+    }
+    write(
+        p,
+        &format!("{base}/.claude-plugin/plugin.json"),
+        &json!({"name":"p","mcpServers":declarations}).to_string(),
+    );
+    let result = scan(p);
+    assert!(result["items"].as_array().unwrap().len() < 12);
+    assert_eq!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "plugin_budget_exceeded")
+            .count(),
+        1
+    );
+    assert!(!result.to_string().contains("CANARY_BYTES"));
+    // The same scan-wide entry budget applies when no individual plugin exceeds it.
+    fs::remove_dir_all(p.join("home/.claude/plugins/cache")).unwrap();
+    for plugin in 0..12 {
+        let entries: serde_json::Map<_, _> = (0..100)
+            .map(|n| (format!("server{n}"), json!({"command":"never"})))
+            .collect();
+        write(
+            p,
+            &format!("home/.claude/plugins/cache/m/p{plugin}/1/.claude-plugin/plugin.json"),
+            &json!({"name":format!("p{plugin}"),"mcpServers":entries}).to_string(),
+        );
+    }
+    let result = scan(p);
+    assert!(result["items"].as_array().unwrap().len() <= 1000);
+    assert_eq!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "plugin_budget_exceeded")
+            .count(),
+        1
+    );
+    fs::remove_dir_all(p.join("home/.claude/plugins/cache")).unwrap();
+    for plugin in 0..130 {
+        write(
+            p,
+            &format!("home/.claude/plugins/cache/m/p{plugin}/1/.claude-plugin/plugin.json"),
+            &json!({"name":format!("p{plugin}"),"mcpServers":{"one":{"command":"never"}}})
+                .to_string(),
+        );
+    }
+    let result = scan(p);
+    assert!(result["items"].as_array().unwrap().len() <= 128);
+    assert_eq!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "plugin_budget_exceeded")
+            .count(),
+        1
+    );
+}

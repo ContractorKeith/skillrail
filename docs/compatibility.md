@@ -168,113 +168,140 @@ against planted hard links, as documented in the CLI contract.
 not the existence of this document. `scripts/accept.sh` runs the full fixture
 gate; release, real-agent and later milestone gates are not implied by M1.
 
-## M2 evidence ledger (2026-11-02)
+## M2 evidence and supported installation selection (2026-11-02)
 
-Checked the official pages below on 2026-11-02; these are living documents,
-not a versioned schema guarantee. Version-only commands on this Linux x86_64
-worker report Claude Code **2.1.309**, Codex CLI **0.166.0**, Rust **1.98.1**,
-Git **2.56.0**. No user configuration or authentication was inspected. Synthetic
-fixtures establish Skillrail behavior; native loading and macOS remain pending.
+This Linux x86_64 worker used Claude Code **2.1.309**, Codex CLI **0.166.0**,
+Rust **1.98.1**, and Git **2.56.0**. Official documentation is living evidence,
+not a versioned schema guarantee. No real user configuration, credentials or
+skills were inspected. Native Claude evidence below uses a generated local
+marketplace and disposable home/project/state; no model session or MCP server
+is started. macOS and broader native loading verification remain pending.
 
-- [Claude MCP](https://code.claude.com/docs/en/mcp): user and selected-project
-  local entries use `.claude.json`; project entries use `.mcp.json`. Documented
-  precedence is local, project, user, plugin. Opt-out settings and project
-  approvals are separate mechanisms. Skillrail records each definition, without
-  merging identities or asserting effective runtime visibility.
-- [Claude plugin manifest](https://code.claude.com/docs/en/plugins-reference):
-  `.claude-plugin/plugin.json`; default `skills/` plus declared skill paths;
-  default `.mcp.json` followed by declared MCP components in order, later names
-  replacing earlier definitions. Paths must remain inside the plugin. Inline
-  maps and local JSON are inspectable; bundles/URLs require native processing
-  and remain unsupported without fetching or extraction.
-- [Claude plugin installation](https://code.claude.com/docs/en/discover-plugins):
-  installed content is cached locally. Cache presence does not establish which
-  version/scope is selected. The full versioned installed-registry envelope schema is not
-  treated as authoritative; activation and installation scope stay unknown.
-- [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp) and
-  [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference):
-  user `.codex/config.toml` and trusted ancestor project config contain
-  `mcp_servers`; `enabled` defaults on. Plugin activation and per-server overrides
-  are separate `plugins` settings. Project trust, profiles, managed policy,
-  account selections and command-line overrides prevent effective visibility
-  claims from a filesystem scan.
-- [OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins):
-  cache layout is `.codex/plugins/cache/<marketplace>/<plugin>/<version>`.
-  Portable root `plugin.json`, `skills/`, `mcp.json` coexist with compatibility
-  `.codex-plugin/plugin.json`. An inline `extensions.com.openai` object replaces
-  the compatibility overlay; portable identity/components remain canonical.
-  Root MCP uses the `mcpServers` map; compatibility uses `.mcp.json` wiring.
-  Cache observations are not evidence of enabled installation.
+### Claude installation evidence
 
-M2 does not consult `/etc`, credential stores, marketplace indexes or unrelated
-project configurations. No scan invokes an agent/server, expands variables,
-runs helpers or fetches URLs. Unsupported cache layouts, manifests, component
-forms and ambiguous selection are reported explicitly rather than guessed.
+[Official plugin loading](https://code.claude.com/docs/en/plugins/loading)
+documents install-record scope/path/version, cache versions and old-version
+retention. `python3 scripts/claude-plugin-evidence.py` reproduces the native
+schema probe (requires exactly Claude 2.1.309 and a built Skillrail binary).
+It sets only Claude's documented `CLAUDE_CONFIG_DIR` isolation override;
+HOME and CODEX_HOME are never reassigned. All native writes are under its
+small disposable fixture. Commands run there:
 
-### Implemented M2 subset and unresolved variants
+```
+claude plugin marketplace add <fixture-local-marketplace> --json
+claude plugin install personal@fixture-market --scope user --json
+claude plugin install shared@fixture-market --scope project --json
+claude plugin install private@fixture-market --scope local --json
+claude plugin install personal@fixture-market --scope project --json
+claude plugin update personal@fixture-market --scope project --json
+```
 
-[Claude loading](https://code.claude.com/docs/en/plugins/loading) confirms
-`cache/<marketplace>/<plugin>/<version>`, install-record fields, and skills-dir
-user/project locations. Project plugins use the selected project only, unlike
-plain skills that search ancestors. Managed rules, workspace trust and desktop
-main-checkout plugin behavior remain unresolved. In-place local-marketplace installs are also unsupported. The
-install-record fields are
-documented, but their complete envelope/version schema was not established.
+Native output established `.claude/plugins/installed_plugins.json` with envelope
+`{"version":2,"plugins":{"name@marketplace":[<records>]}}`. Each record carries
+`scope`, absolute `installPath`, string `version`, `installedAt`, `lastUpdated`,
+and `projectPath` for project/local scopes. Updating the fixture left personal
+user scope at 1.2.3 and project scope at 2.0.0; both cache directories remained.
+The executable probe prints the normalized generated registry and replays it
+through Skillrail with explicit `--home`, `--project`, `--state-dir`.
 
-Both agents enumerate immediate marketplace/plugin/version cache directories,
-with a shared 1000-entry budget per cache traversal. Claude also inspects ordinary
-plugin folders found under user and selected-project `.claude/skills` roots;
-these retain user/project scope. Ancestors are not searched for plugins. Cache directory
-links are refused explicitly; M1 standalone skill links retain their behavior.
-Manifest/config reads are bounded to 128 KiB, and individual MCP maps to 1000
-entries. Component paths must start with `./` (or `.` for a skill root), contain
-no parent traversal, variable syntax or backslash, and canonically remain inside
-the plugin root. Links to external manifests/components are refused. No bundle
-extraction, shell expansion, helper execution or online resolution occurs.
+The adapter accepts that versioned envelope, validates all required types,
+correlates install paths against the ID/version cache layout and retains
+user/project/local scope for the selected project. Repeated scoped records
+produce separate occurrences. Other-project records do not acquire selected
+scope or leak their project paths. Unselected versions remain `residual` cache
+observations. Missing, duplicate, malformed, over-budget or unknown-version
+registries produce explicit uncertainty instead of guessed installation facts.
+Optional `gitCommitSha` is accepted only as a string and discarded, like dates.
+Unsupported registry fields/layouts are diagnosed. Registry-validated cache-root
+links may resolve an installed source; arbitrary cache links are refused.
+Non-cache/in-place records whose layout is not established remain unknown.
 
-Claude standalone JSON supports command/args/env and explicitly typed HTTP,
-SSE and WebSocket definitions. A remote URL without a type is invalid in Claude;
-Codex TOML instead infers HTTP from `url`. MCP schemas validate core field types;
-unknown fields/transports and nested auth/tool/extension schemas stay unknown.
-URL validation checks only scheme/authority presence and whitespace; it never
-retains an endpoint or proves native URL acceptance. Optional agent-specific
-fields beyond the documented core are not fully validated. Claude's native
-`disabledMcpServers` opt-outs and MCP-JSON approvals are not evaluated; entry
-status records the definition, while runtime visibility remains unknown.
+### Codex versioned source evidence
 
-Standalone configs are observed at the selected project and supported ancestors
-through the repository boundary. Claude local entries are selected by the exact
-canonical project key in `.claude.json`; alternate spellings and ancestor local
-keys are unresolved. Ancestor configuration presence is an observation, not a
-claim about a native session's selected project root. There is no MCP main-checkout
-fallback; M1's Claude skill fallback remains unchanged.
+The official `openai/codex` tag **rust-v0.166.0**, resolved commit
+**6ff1e1ca3b30fc8b914720681fcf5fe62e95f856**, provides exact evidence:
 
-Claude plugin MCP merges the default wrapper map, then local JSON (wrapper or
-bare maps), inline maps and arrays in declaration order. Later names replace
-whole earlier entries inside that plugin only. Unsupported components produce
-diagnostics and make surviving plugin MCP status unknown. Claude skills add
-manifest directories to `skills/`; Codex compatibility skills select declared
-roots (default `skills/` if absent). Codex portable components use fixed root
-paths; OpenAI-specific hooks/apps/presentation overlays are not inventoried.
-Marketplace component overrides, command-mode links, plugins outside these
-caches, account-managed installs, registered app MCP mappings and bundles remain
-unsupported. Missing/malformed manifests and unknown layouts produce diagnostics;
-cache candidates never imply installation, selection, or enablement.
+- [installed.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core-plugin-common/src/installed.rs)
+  defines selection: valid version directories, `local` preferred, otherwise
+  maximum version using SemVer comparison when both parse and lexical comparison
+  otherwise. Skillrail uses the same `semver` crate to preserve prerelease and
+  multi-digit ordering rather than inventing a comparator.
+- [store.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/core-plugins/src/store.rs)
+  places `.codex-remote-plugin-install.json` at the plugin base, not a version
+  directory. Its schema is `schema_version:1` and nonempty `remote_plugin_id`.
+  Skillrail validates it, emits no remote ID, and diagnoses unknown metadata.
+- [mcp_types.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/config/src/mcp_types.rs)
+  pins environment-selector forms, approval enums and scopes. The
+  [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+  corroborates `env_vars` strings or `{name, source?}` with local/remote source,
+  string-array `scopes`, and approval modes auto/prompt/writes/approve.
 
-For cache candidates, user `enabledPlugins` (Claude) and
-`plugins.<name@market>.enabled` (Codex) are
-reported as matching-rule observations only. Codex user per-plugin MCP `enabled`
-can refine a supported definition; it cannot make an invalid/unknown definition
-valid. Presence of project settings keeps those observations unknown because
-trust and merging are unresolved. Default activation and account/workspace rules
-are not inferred. Skillrail never reads an installation registry whose schema
-has not been established. Cache plugin install scope/version selection remains unknown,
-including when a matching user rule exists. Skills-directory activation rules
-and manifest defaultEnabled are not interpreted. These are explicit compatibility
-limits, not claims of complete native discovery.
+The supported Codex store exposes version selection and remote identity
+metadata, not Claude's scoped central install registry. Codex installation
+scope therefore stays unknown; configuration-layer scope is separately known.
+A selected store version does not prove activation or live-session loading.
+Remote/account identity reconciliation and custom homes are not inferred.
 
-No additional Cargo dependencies were needed. Raw JSON/TOML values exist only
-transiently in the adapters. Typed sanitized occurrences feed the existing shared
-CLI/TUI formatter and verified SQLite snapshot transaction. Fixture canaries
-exercise both agents, standalone/plugin paths, malformed schemas and diagnostic
-contexts. Native loading, independent review/attack and macOS are pending gates.
+### Configuration observations and components
+
+[Claude MCP](https://code.claude.com/docs/en/mcp) establishes standalone user and
+selected-project local entries in `.claude.json`, project `.mcp.json`, and
+local > project > user > plugin definition precedence. The selected project's
+persisted `disabledMcpServers` list is retained, including namespaced
+`plugin:<manifest-name>:<server>` matching. User/project/local settings'
+`disabledMcpjsonServers` and `enabledMcpjsonServers` are separately recorded with
+source/scope; a known rejection changes the configured status to disabled.
+Approvals are not assumed trusted. Managed policy, setting-source selection,
+tracked-file approval eligibility and session state remain unresolved.
+
+Codex user and ancestor project TOML layers retain their own plugin activation
+and per-server enablement observations. Unrelated project model settings do not
+erase a user disable. Conflicting known observations summarize as unknown while
+both facts remain visible. Malformed containers, per-server tables, booleans,
+arrays and supported approval enums produce sanitized diagnostics/invalid
+status. Nested or unknown policy remains explicitly unknown. A matching rule
+never makes an invalid or unsupported server definition valid.
+
+[Claude manifest reference](https://code.claude.com/docs/en/plugins-reference)
+establishes default skills plus declared roots, and default `.mcp.json` then
+ordered declarations with whole-entry replacement inside that plugin. Root
+`SKILL.md` is one plugin skill only when there is no `skills/` and no `skills`
+key. This fallback inventories only the root skill and does not enumerate or
+fingerprint unrelated plugin content; its full-folder digest is unknown.
+Skills-directory plugins use user or selected-project scope, not ancestor
+plugin discovery. Managed trust and desktop main-checkout plugin behavior remain
+unresolved. M1 standalone skill worktree fallback is unchanged.
+
+[OpenAI packaging](https://developers.openai.com/plugins/build/plugins) establishes
+Codex's marketplace/plugin/version cache, portable `plugin.json`, `skills/`,
+`mcp.json`, and compatibility `.codex-plugin/plugin.json`. Portable components
+remain canonical; OpenAI presentation/hooks/app overlays are not inventoried.
+Compatibility skill roots and local/inline MCP components are supported.
+Marketplace component overrides, bundles, registered app mappings and arbitrary
+external plugin directories remain explicitly unsupported.
+
+### Resource and credential boundaries
+
+Plugin loading has scan-wide limits: 128 inspected candidates, 256 declaration
+nodes (including nested arrays/repeated paths), 1000 entry/tree operations,
+256 file reads, and 1 MiB of content reads. Registry and install-metadata reads,
+manifest/components, skill metadata and fingerprints consume the shared budget.
+A JSON file additionally has a 128 KiB ceiling. Existing bounded cache-root
+enumeration remains 1000 entries per agent cache. One `plugin_budget_exceeded`
+diagnostic marks truncation; final plugin MCP status becomes unknown, with no
+per-entry budget-error amplification. Item/occurrence aggregation is grouped
+rather than repeatedly scanning every occurrence per item.
+
+All JSON configuration rejects duplicate keys conservatively, even in nested
+objects. Native duplicate-key behavior is unverified: rejection is an explicit
+unknown, not a claim that the native agent rejects it. Parse context and values
+never reach output. Unsupported fields/transports and nested auth/tool schemas
+also stay unknown. URL checks establish only a structural minimum, not native
+URL acceptance; no endpoint part is retained.
+
+Component paths must be contained plugin-relative paths with no parent
+traversal, variables or backslashes. No scan executes commands/helpers, expands
+values, extracts bundles or contacts a network. Raw configuration trees remain
+transient. Typed sanitized data alone feeds CLI/TUI/SQLite. New layer/registry
+canaries, cumulative-budget fixtures and native evidence complement the M1
+provenance, terminal escaping, cache and worktree regressions.

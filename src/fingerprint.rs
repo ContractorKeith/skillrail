@@ -15,6 +15,14 @@ pub struct Fingerprint {
 }
 
 pub fn fingerprint(root: &Path) -> Fingerprint {
+    fingerprint_with_budget(root, &mut (64 * 1024 * 1024), &mut 10_000)
+}
+
+pub(crate) fn fingerprint_with_budget(
+    root: &Path,
+    remaining_bytes: &mut u64,
+    remaining_entries: &mut usize,
+) -> Fingerprint {
     let mut hash = Sha256::new();
     let mut diagnostics = Vec::new();
     let mut entries = 0;
@@ -29,6 +37,8 @@ pub fn fingerprint(root: &Path) -> Fingerprint {
         &mut bytes,
         0,
         &mut failure,
+        remaining_bytes,
+        remaining_entries,
     )
     .is_err()
     {
@@ -56,6 +66,7 @@ fn field(hash: &mut Sha256, data: &[u8]) {
     hash.update(data);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk(
     root: &Path,
     path: &Path,
@@ -64,7 +75,13 @@ fn walk(
     bytes: &mut u64,
     depth: usize,
     failure: &mut Option<PathBuf>,
+    remaining_bytes: &mut u64,
+    remaining_entries: &mut usize,
 ) -> Result<(), ()> {
+    if *remaining_entries == 0 {
+        return Err(());
+    }
+    *remaining_entries -= 1;
     *failure = Some(path.to_owned());
     *entries += 1;
     if *entries > 10_000 || depth > 64 {
@@ -120,7 +137,17 @@ fn walk(
             ) {
                 continue;
             }
-            walk(root, &child, hash, entries, bytes, depth + 1, failure)?;
+            walk(
+                root,
+                &child,
+                hash,
+                entries,
+                bytes,
+                depth + 1,
+                failure,
+                remaining_bytes,
+                remaining_entries,
+            )?;
         }
     } else if metadata.is_file() {
         field(hash, b"file");
@@ -128,7 +155,15 @@ fn walk(
         if *bytes > 64 * 1024 * 1024 {
             return Err(());
         }
-        field(hash, &files::read(path, 16 * 1024 * 1024)?);
+        if metadata.len() > *remaining_bytes {
+            *remaining_bytes = 0;
+            return Err(());
+        }
+        *remaining_bytes -= metadata.len();
+        field(
+            hash,
+            &files::read(path, metadata.len().min(16 * 1024 * 1024))?,
+        );
     } else {
         return Err(());
     }
