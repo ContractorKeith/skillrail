@@ -246,7 +246,7 @@ pub(super) fn add_server(
     plugin: Option<(&Path, &Path)>,
     selector: &str,
 ) {
-    let name = label(raw_name);
+    let mut name = label(raw_name);
     let identity = files::id(&[
         "mcp-entry",
         &format!("{agent:?}/{scope:?}"),
@@ -262,6 +262,7 @@ pub(super) fn add_server(
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
     {
+        name = "unsupported-name".into();
         status = ConfiguredStatus::Invalid;
         reason = "Server name is unsupported by the verified schema; unsafe labels are replaced and the raw key is never retained.";
     }

@@ -563,3 +563,20 @@ fn mcp_names_do_not_change_standalone_skill_collision_facts() {
             .all(|i| i["name_collision"] == false)
     );
 }
+
+#[test]
+fn unsupported_server_keys_are_redacted_instead_of_retained_as_safe_labels() {
+    let root = fixture();
+    write(
+        root.path(),
+        "project/.mcp.json",
+        r#"{"mcpServers":{"bad:CANARY_KEY":{"command":"never-run"}}}"#,
+    );
+    let result = scan(root.path());
+    assert_eq!(result["occurrences"][0]["name"], "unsupported-name");
+    assert_eq!(
+        result["occurrences"][0]["mcp"]["configured_status"],
+        "invalid"
+    );
+    assert!(!result.to_string().contains("CANARY_"));
+}
