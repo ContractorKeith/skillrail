@@ -103,6 +103,10 @@ def scenario(binary, root, version):
             response = client.request(ident, "tools/call", params)
             assert response["error"]["code"] == -32601, response
             assert "OUTER_CANARY" not in json.dumps(response)
+        optional = client.request(43, "tools/call", {"name": "list_inventory", "arguments": None})
+        assert not optional["result"]["isError"], optional
+        required = client.request(44, "tools/call", {"name": "get_item", "arguments": None})
+        assert required["error"]["code"] == -32602, required
         resources = client.request(9, "resources/read", {"uri": "file:///SKILL.md"})
         assert resources["error"]["code"] == -32601, resources
         client.request(10, "tools/call", {"name": "list_inventory", "arguments": {}})
