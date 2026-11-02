@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Shared gate. M0 adds the executable fixture smoke checks.
-set -eu
+# Exact local/worker/reviewer/CI gate. Python 3 supplies standard-library PTYs.
+set -euo pipefail
 cd "$(dirname "$0")/.."
-if [ ! -f Cargo.toml ]; then
-  echo 'M0 has not landed: no Rust implementation to verify.' >&2
-  exit 1
-fi
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
+python3 scripts/smoke.py
