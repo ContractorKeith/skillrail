@@ -6,9 +6,9 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-M0 merged in PR #9 — 2026-11-02. M1 implements standalone skill inventory;
-see docs/compatibility.md for coverage, version evidence and limitations.
-Independent M1 review/attack and macOS verification remain orchestrator gates.
+M0 and M1 merged in PRs #9/#13 — 2026-11-02. M1 standalone inventory passed
+independent reviews/attack and Linux/macOS CI. Next: M2 MCP/plugin inventory.
+See docs/compatibility.md for coverage and pending real-agent release checks.
 
 ## Commands
 `bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
