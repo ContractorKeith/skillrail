@@ -587,7 +587,9 @@ Git uses `/usr/bin/git` argument arrays with a cleared environment, no global or
 system config, no templates/hooks, no credential helper or prompts, and only
 HTTPS transport enabled. Local Git copies bounded objects/refs/HEAD/packed-refs
 into a private bare repository and never parses the source config. The metadata
-copy is limited to 64 MiB and individual guarded files to 4 MiB. HTTPS explicitly
+copy is limited to 64 MiB, 10000 cumulative entries across objects/refs recursion
+and HEAD/packed-refs, and individual guarded files to 4 MiB. Entries are charged
+before copying, including empty directories; HEAD/packed-refs bytes are charged too. HTTPS explicitly
 fetches into the same isolated repository, with redirects/proxies disabled and
 HTTP low-speed limits. No checkout, clean/smudge filter, submodule command,
 source script, shell interpolation or inventory fetch occurs. Network/DNS/storage

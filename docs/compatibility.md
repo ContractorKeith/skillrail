@@ -604,3 +604,40 @@ the OS account home. Netrc metadata is checked without reading credential values
 HOME/CODEX_HOME are never overridden. No authentication helper or redirect
 fallback is provided. Independent Standards/Spec review and adversarial QA belong
 to the parent before ready/merge; this implementation run does not certify them.
+
+
+### Simultaneous resize/input readiness correction
+
+At M5 head `2243862`, one macOS CI job timed out in the first PTY smoke's quit
+wait while its sibling run passed. The log did not capture the event ordering.
+Linux reproduced the exact timeout with a syscall scheduling probe that coalesced
+real SIGWINCH/input readiness and returned the resize notification first. In
+Crossterm 0.29's default Mio reader, `try_read` returns a Resize event from inside
+the readiness loop, discarding the remaining terminal readiness notification.
+With edge-triggered polling the unread quit byte can then remain stranded.
+Output draining does not fix a lost input notification.
+
+Skillrail enables Crossterm's supported `use-dev-tty` feature, selecting its
+level-triggered Unix poll reader. Unread descriptors remain ready on the next
+poll. This uses already-locked `filedescriptor 0.8.3`; it adds no package/version
+and avoids maintaining a custom input parser or dependency-source patch.
+The standard PTY driver additionally sends resize immediately before quit on
+both platforms. `scripts/pty-readiness-smoke.py` uses the existing C compiler
+prerequisite on Linux to force simultaneous real readiness through the same
+application/PTY path. It verifies the control actually fired and terminal
+attributes/alternate screen restored after a single quit. Re-enabling the default
+reader is a negative control reproducing the original ten-second timeout; the
+level-triggered reader passes. Deadlines are unchanged.
+
+This establishes a real event-reader defect consistent with the CI symptom,
+not proof of the failed macOS job's exact event order. macOS execution of this
+follow-up remains CI evidence; the Linux syscall interposer is explicitly
+platform-specific and the ordinary resize/input smoke runs on both platforms.
+
+
+The M5 follow-up also caps local Git metadata cumulatively at 10000 entries
+across objects/refs recursion and HEAD/packed-refs, charging directories/files
+before copying and including HEAD/packed-refs bytes in the 64 MiB budget. The
+parent's failing-first fixture used 10302 empty directories to prove that
+per-directory limits alone did not bound work. Combined Linux acceptance passed 135 Rust tests, strict fmt/Clippy, existing
+smokes and the additional portable/deterministic resize-input PTY regressions.

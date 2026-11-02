@@ -81,7 +81,8 @@ agent loading verification remains pending.
 
 Dependencies are limited to Clap (argument/help handling), Serde/JSON (typed
 output), rusqlite with bundled SQLite (portable transactional cache), Ratatui
-and Crossterm (rendering, terminal events and restoration), serde-saphyr
+and Crossterm (rendering, terminal events and restoration; its level-triggered
+Unix reader preserves simultaneous resize/input readiness), serde-saphyr
 (bounded YAML frontmatter), sha2 (stable fingerprints), toml (Codex rule parsing), toml_edit (preserves TOML comments/layout during
 config changes), libc (descriptor-relative no-follow I/O and platform-exclusive
 rename),

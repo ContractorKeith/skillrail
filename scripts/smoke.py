@@ -76,14 +76,15 @@ def screen_text(data, rows=16, columns=100):
     return "\n".join("".join(line) for line in screen)
 
 
-def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False):
+def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
+              resize_quit=False, process_env=None, before_quit=None):
     master, slave = pty.openpty()
     process = None
     try:
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 16, 100, 0, 0))
         original = termios.tcgetattr(slave)
         process = subprocess.Popen(command(binary, root) + ["tui"], stdin=slave,
-                                   stdout=slave, stderr=slave, start_new_session=True)
+                                   stdout=slave, stderr=slave, start_new_session=True, env=process_env)
         output = bytearray()
         deadline = time.monotonic() + 10
         while b"Skills/MCP: 3" not in b" ".join(
@@ -131,6 +132,10 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False):
             if exit_backpressure:
                 # Queue enough redraws to fill a PTY unless the parent drains it.
                 os.write(master, b"\x1b[6~\x1b[5~" * 100)
+            if resize_quit:
+                os.kill(process.pid, signal.SIGWINCH)
+            if before_quit is not None:
+                before_quit(process)
             os.write(master, b"q")
         # Keep draining while waiting: redraw/restoration writes can fill a
         # PTY, especially on macOS, and otherwise prevent the child from exiting.
@@ -146,7 +151,7 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False):
         assert b"\x1b[?1049h" in output and b"\x1b[?1049l" in output, "alternate screen not restored"
         if fail_refresh:
             assert b"index_version_unsupported" in output
-        print(f"PTY smoke: {'refresh error' if fail_refresh else 'backpressured quit' if exit_backpressure else 'quit'} restored terminal")
+        print(f"PTY smoke: {'refresh error' if fail_refresh else 'backpressured quit' if exit_backpressure else 'resize/input quit' if resize_quit else 'quit'} restored terminal")
     finally:
         if process is not None and process.poll() is None:
             process.kill()
@@ -177,7 +182,7 @@ def main():
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
-    for scenario in ("cli", "quit", "error", "backpressure"):
+    for scenario in ("cli", "quit", "error", "backpressure", "resize-quit"):
         with tempfile.TemporaryDirectory(prefix="m1-smoke-", dir=target) as directory:
             root = Path(directory).resolve()
             (root / "home").mkdir()
@@ -187,7 +192,8 @@ def main():
                 cli_smoke(binary, root)
             else:
                 tui_smoke(binary, root, fail_refresh=scenario == "error",
-                          exit_backpressure=scenario == "backpressure")
+                          exit_backpressure=scenario == "backpressure",
+                          resize_quit=scenario == "resize-quit")
 
 
 if __name__ == "__main__":
