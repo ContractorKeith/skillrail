@@ -76,7 +76,7 @@ def screen_text(data, rows=16, columns=100):
     return "\n".join("".join(line) for line in screen)
 
 
-def tui_smoke(binary, root, fail_refresh=False):
+def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False):
     master, slave = pty.openpty()
     process = None
     try:
@@ -128,15 +128,25 @@ def tui_smoke(binary, root, fail_refresh=False):
                 assert time.monotonic() < deadline, "TUI did not redraw the resized terminal"
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
+            if exit_backpressure:
+                # Queue enough redraws to fill a PTY unless the parent drains it.
+                os.write(master, b"\x1b[6~\x1b[5~" * 100)
             os.write(master, b"q")
-        assert process.wait(timeout=10) == (1 if fail_refresh else 0)
+        # Keep draining while waiting: redraw/restoration writes can fill a
+        # PTY, especially on macOS, and otherwise prevent the child from exiting.
+        exit_deadline = time.monotonic() + 10
+        while process.poll() is None:
+            assert time.monotonic() < exit_deadline, "TUI did not exit while output was drained"
+            if select.select([master], [], [], 0.1)[0]:
+                output.extend(os.read(master, 65536))
+        assert process.returncode == (1 if fail_refresh else 0)
         while select.select([master], [], [], 0)[0]:
             output.extend(os.read(master, 65536))
         assert termios.tcgetattr(slave) == original, "terminal attributes were not restored"
         assert b"\x1b[?1049h" in output and b"\x1b[?1049l" in output, "alternate screen not restored"
         if fail_refresh:
             assert b"index_version_unsupported" in output
-        print(f"PTY smoke: {'refresh error' if fail_refresh else 'quit'} restored terminal")
+        print(f"PTY smoke: {'refresh error' if fail_refresh else 'backpressured quit' if exit_backpressure else 'quit'} restored terminal")
     finally:
         if process is not None and process.poll() is None:
             process.kill()
@@ -167,7 +177,7 @@ def main():
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
-    for scenario in ("cli", "quit", "error"):
+    for scenario in ("cli", "quit", "error", "backpressure"):
         with tempfile.TemporaryDirectory(prefix="m1-smoke-", dir=target) as directory:
             root = Path(directory).resolve()
             (root / "home").mkdir()
@@ -176,7 +186,8 @@ def main():
             if scenario == "cli":
                 cli_smoke(binary, root)
             else:
-                tui_smoke(binary, root, fail_refresh=scenario == "error")
+                tui_smoke(binary, root, fail_refresh=scenario == "error",
+                          exit_backpressure=scenario == "backpressure")
 
 
 if __name__ == "__main__":

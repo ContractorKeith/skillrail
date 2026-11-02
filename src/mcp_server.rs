@@ -7,7 +7,6 @@ use rmcp::{
     ErrorData, ServerHandler, ServiceExt,
     model::*,
     service::{RequestContext, RoleServer},
-    transport::async_rw::AsyncRwTransport,
 };
 use serde_json::{Value, json};
 use std::{
@@ -196,8 +195,7 @@ pub fn run(application: Application) -> Result<(), AppError> {
             reader: tokio::io::stdin(),
             closed: Some(closed),
         };
-        let transport = AsyncRwTransport::new_server(input, tokio::io::stdout())
-            .with_max_line_length(64 * 1024);
+        let transport = crate::mcp_transport::bounded(input, tokio::io::stdout());
         let service = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             Server::new(application).serve(transport),

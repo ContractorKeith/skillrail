@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Raw stdio boundary probes complement the official Rust SDK client test."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -84,6 +85,23 @@ def scenario(binary, root, version):
         malformed = client.read()
         assert malformed["error"]["code"] == -32600, malformed
         assert "DO_NOT_ECHO" not in json.dumps(malformed)
+        # Pipeline responses and malformed shapes to exercise the service's
+        # send/receive cancellation boundary through real OS pipes.
+        batch = []
+        ping_ids = set()
+        for index in range(16):
+            for ident in (1000 + 2 * index, 1001 + 2 * index):
+                ping_ids.add(ident)
+                batch.append({"jsonrpc":"2.0", "id":ident, "method":"ping"})
+                if ident % 2 == 0:
+                    batch.append({"jsonrpc":"2.0", "id":{}, "method":"ping",
+                                  "params":{"secret":"PIPELINE_CANARY"}})
+        client.raw(b"".join(json.dumps(message).encode() + b"\n" for message in batch))
+        replies = [client.read() for _ in batch]
+        errors = [reply for reply in replies if "error" in reply]
+        assert len(errors) == 16 and all(reply["error"]["code"] == -32600 and reply.get("id") is None for reply in errors)
+        assert {reply["id"] for reply in replies if "result" in reply} == ping_ids
+        assert "PIPELINE_CANARY" not in json.dumps(replies)
         for ident, method, params in [
             (4, "tools/call", {"name": "write_config", "arguments": {}}),
             (5, "tools/call", {"name": "get_item", "arguments": {}}),
@@ -144,16 +162,21 @@ def scenario(binary, root, version):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repeat", type=int, choices=range(1, 21), default=1,
+                        metavar="1..20", help="bounded live protocol stress repetitions")
+    args = parser.parse_args()
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
-    for version in ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "1999-01-01"):
-        with tempfile.TemporaryDirectory(prefix="m3-protocol-", dir=target) as directory:
-            root = Path(directory).resolve()
-            (root / "home/.git").mkdir(parents=True)
-            (root / "project/.git").mkdir(parents=True)
-            scenario(target / "debug/skillrail", root, version)
-    print("MCP boundary smoke: four negotiated versions, fallback, malformed/oversized input, errors, EOF passed")
+    for _ in range(args.repeat):
+        for version in ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "1999-01-01"):
+            with tempfile.TemporaryDirectory(prefix="m3-protocol-", dir=target) as directory:
+                root = Path(directory).resolve()
+                (root / "home/.git").mkdir(parents=True)
+                (root / "project/.git").mkdir(parents=True)
+                scenario(target / "debug/skillrail", root, version)
+    print(f"MCP boundary smoke: {args.repeat * 5} sessions, {args.repeat * 80} pipelined malformed requests; versions, limits, errors, EOF passed")
 
 
 if __name__ == "__main__":

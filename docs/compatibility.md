@@ -355,3 +355,31 @@ session execution is claimed by this implementation run. The same acceptance
 script runs in Linux/macOS CI; exact CI outcomes and independent/adversarial
 reviews remain integration checks. Existing native adapter evidence above is
 unchanged and does not establish MCP session loading.
+
+### M3 transport cancellation regression
+
+rmcp 3.8.0's `AsyncRwTransport::receive` clears a parsed malformed line before
+awaiting the writer lock and error-frame flush. Its service loop selects that
+receive future alongside outgoing completion events. Cancelling receive while
+it waits can therefore discard the only error response for an already-consumed
+line. A controlled one-byte async writer regression reproduced the loss on Linux
+without Python, subprocess timing or longer timeouts. It failed with
+`cancelled receive lost the malformed-request response` before the adapter.
+
+Skillrail retains the pinned official parser/framing behind a persistent reader
+task and capacity-one request channel. Outgoing SDK framing and parser errors
+share a writer lock for each complete frame. The reader is aborted on drop and
+aborted/awaited on close; I/O failures release frame locks. Five transport tests
+cover cancellation while waiting for output, partial error flush, partial input,
+close/drop under backpressure, and write failure cleanup. No dependency, registry
+source or protocol-parser changes are needed. Raw stdio smokes also pipeline
+malformed requests with normal replies; `--repeat 1..20` bounds repetitions.
+macOS acceptance on the corrected commit remains required CI evidence, not a
+local Linux claim.
+
+A separate supplied macOS run stopped at the PTY exit wait rather than MCP.
+A controlled burst of 100 alternating page redraws reproduced that timeout on
+Linux: waiting without draining output filled the PTY and prevented terminal
+restoration/exit. The smoke now drains while waiting under the original ten-second
+deadline, and a bounded backpressured-quit scenario verifies attributes and the
+alternate screen are restored. This changes the test driver, not TUI behavior.

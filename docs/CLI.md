@@ -213,7 +213,8 @@ The TUI requires terminal stdin/stdout and refuses piped execution before any
 state creation. Normal quit, Ctrl-C key handling, errors and Rust unwinding
 attempt terminal restoration; Ratatui also installs its panic restoration hook.
 Uncatchable process termination cannot run cleanup. PTY smokes verify restored
-terminal attributes and alternate-screen exit on quit and a refresh error.
+terminal attributes and alternate-screen exit on quit and a refresh error,
+including backpressured redraws with output drained during the exit wait.
 
 ## Shared queries and pagination
 
@@ -307,10 +308,20 @@ query JSON. There is no structuredContent duplicate or skill-body resource.
 
 Transport lines are limited to 64 KiB (including newline). Following rmcp 3.8.0,
 malformed JSON syntax and oversized lines are discarded, with recovery at the
-next newline; structurally invalid JSON-RPC receives sanitized `-32600` with null
-ID. Unknown notifications are ignored. Keep stdin open until the response has
-arrived; close stdin to disconnect. Incomplete trailing lines are dropped.
+next newline; structurally invalid JSON-RPC receives sanitized `-32600` without
+a correlated ID (the SDK omits the `id` field). Unknown notifications are ignored.
+Keep stdin open until the response has arrived; close stdin to disconnect. Incomplete trailing lines are dropped.
 Disconnect after initialization exits cleanly with no stdout trailer or stderr.
+An adapter keeps the SDK receive future in one persistent task so ordinary
+service polling cannot cancel a parser error after its input line was consumed.
+It forwards requests through a capacity-one channel; at most one further parsed
+request waits in the reader. Normal replies and parser errors use SDK framing
+and one shared writer lock held through frame flush. Close/drop stops the reader;
+write failures release the shared lock. No parser or raw-payload error path is
+reimplemented. `python3 scripts/mcp-smoke.py --repeat 20` runs a bounded 100-session
+stress pass, including 1,600 pipelined malformed requests; the default gate runs
+five sessions with 80 such requests. Client timeouts are unchanged.
+
 Initialization has a 30-second deadline. Each scan has a 30-second response
 deadline, runs off the protocol runtime, and holds the single scan slot until
 completion even after timeout/cancellation. Concurrent scans receive a fixed
