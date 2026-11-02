@@ -155,8 +155,18 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 ));
                 continue;
             }
-            let link = fs::symlink_metadata(&original).is_ok_and(|m| m.is_symlink());
-            if !original.is_dir() && !link {
+            let entry_metadata = match fs::symlink_metadata(&original) {
+                Ok(metadata) => metadata,
+                Err(_) => {
+                    inventory.diagnostics.push(diagnostic(
+                        "discovery_incomplete",
+                        "A candidate skill location could not be inspected.",
+                    ));
+                    continue;
+                }
+            };
+            let link = entry_metadata.is_symlink();
+            if !entry_metadata.is_dir() && !link {
                 continue;
             }
             let canonical = original
@@ -164,11 +174,17 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 .ok()
                 .filter(|p| p.is_dir() && p.to_str().is_some());
             // A direct ordinary directory without SKILL.md is not a skill. Broken links remain rows.
-            if let Some(path) = &canonical
-                && fs::symlink_metadata(path.join("SKILL.md")).is_err()
-                && !link
-            {
-                continue;
+            if let Some(path) = &canonical {
+                match fs::symlink_metadata(path.join("SKILL.md")) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound && !link => {
+                        continue;
+                    }
+                    Err(_) => inventory.diagnostics.push(diagnostic(
+                        "discovery_incomplete",
+                        "A candidate skill's metadata is inaccessible; its occurrence remains unknown.",
+                    )),
+                    Ok(_) => {}
+                }
             }
             if canonical
                 .as_ref()

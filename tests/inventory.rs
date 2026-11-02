@@ -1,6 +1,69 @@
 use serde_json::Value;
 use std::{fs, path::Path, process::Command};
 
+#[test]
+fn mixed_case_or_duplicate_origin_keys_cannot_merge_sources() {
+    let root = fixture();
+    let p = root.path();
+    let config = "[remote \"origin\"]\nurl = https://github.com/example/shared.git\n";
+    for base in ["home/.agents", "project/.agents"] {
+        skill(p, &format!("{base}/skills/check"), "check");
+        write(p, &format!("{base}/.git/config"), config);
+    }
+    assert_eq!(scan(p)["items"].as_array().unwrap().len(), 1);
+    for extra in [
+        "URL = https://github.com/example/second.git\n",
+        "[REMOTE \"origin\"]\nurl = https://github.com/example/second.git\n",
+        "[remote\t\"origin\"]\nuRl = https://github.com/example/second.git\n",
+    ] {
+        write(p, "home/.agents/.git/config", &format!("{config}{extra}"));
+        let result = scan(p);
+        assert_eq!(result["items"].as_array().unwrap().len(), 2, "{extra}");
+        assert!(
+            result["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|i| i["name_collision"] == true)
+        );
+    }
+}
+
+#[test]
+fn inaccessible_skill_directory_remains_unknown_instead_of_disappearing() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = fixture();
+    let p = root.path();
+    for base in ["home/.agents", "project/.agents"] {
+        skill(p, &format!("{base}/skills/check"), "check");
+        write(
+            p,
+            &format!("{base}/.git/config"),
+            "[remote \"origin\"]\nurl = https://github.com/example/shared.git\n",
+        );
+    }
+    assert_eq!(scan(p)["items"][0]["drift"], "equal");
+    let folder = p.join("project/.agents/skills/check");
+    let mode = fs::metadata(&folder).unwrap().permissions().mode();
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o0)).unwrap();
+    let denied = fs::symlink_metadata(folder.join("SKILL.md")).is_err();
+    let result = scan(p);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(mode)).unwrap();
+    if !denied {
+        eprintln!("directory permission denial unavailable for this user");
+        return;
+    }
+    assert_eq!(result["occurrences"].as_array().unwrap().len(), 2);
+    assert_eq!(result["items"][0]["drift"], "unknown");
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "discovery_incomplete")
+    );
+}
+
 fn write(root: &Path, path: &str, text: &str) {
     let path = root.join(path);
     fs::create_dir_all(path.parent().unwrap()).unwrap();

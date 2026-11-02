@@ -66,10 +66,19 @@ fn origin(config: &str) -> Option<String> {
             return None;
         }
         if line.starts_with('[') {
-            in_origin = line == "[remote \"origin\"]";
+            let section = line.strip_prefix('[')?.strip_suffix(']')?.trim();
+            // Git section/key names are case-insensitive; quoted subsections are not.
+            // Reject deprecated dotted remote syntax instead of overlooking another origin.
+            if section.to_ascii_lowercase().starts_with("remote.") {
+                return None;
+            }
+            let mut parts = section.splitn(2, char::is_whitespace);
+            let kind = parts.next()?;
+            let subsection = parts.next().map(str::trim);
+            in_origin = kind.eq_ignore_ascii_case("remote") && subsection == Some("\"origin\"");
         } else if in_origin
             && let Some((key, value)) = line.split_once('=')
-            && key.trim() == "url"
+            && key.trim().eq_ignore_ascii_case("url")
         {
             if remote.is_some() {
                 return None;
