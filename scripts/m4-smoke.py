@@ -20,7 +20,8 @@ def main():
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
-    with tempfile.TemporaryDirectory(prefix="m4-", dir=target) as directory:
+    # Build caches may have writable ancestors; mutation fixtures need trusted paths.
+    with tempfile.TemporaryDirectory(prefix="m4-") as directory:
         root = Path(directory).resolve()
         (root / "home/.codex").mkdir(parents=True)
         (root / "project/.git").mkdir(parents=True)
