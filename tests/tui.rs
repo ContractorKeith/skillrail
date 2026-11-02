@@ -23,7 +23,7 @@ fn shared_inventory_renders_in_small_and_resized_terminal_and_quits() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(text.contains("No standalone skills found"));
+    assert!(text.contains("No skills or MCP entries found"));
     assert!(text.contains("partial coverage"));
     terminal.backend_mut().resize(8, 3);
     terminal.autoresize().unwrap();

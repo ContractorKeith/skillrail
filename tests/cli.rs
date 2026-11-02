@@ -73,7 +73,7 @@ fn isolated_empty_inventory_rebuilds_and_explains_partial_coverage() {
     assert_eq!(first["schema_version"], 1);
     assert_eq!(first["items"], serde_json::json!([]));
     assert_eq!(first["occurrences"], serde_json::json!([]));
-    assert_eq!(first["discovery"]["status"], "standalone_skills_partial");
+    assert_eq!(first["discovery"]["status"], "inventory_partial");
     assert_eq!(first["diagnostics"][0]["code"], "coverage_partial");
     for (field, dir) in [
         ("home", "home"),

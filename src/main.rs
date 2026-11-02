@@ -7,7 +7,7 @@ mod output;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Local-first skill and MCP registry (standalone skill inventory)"
+    about = "Local-first skill and MCP registry (read-only skill, MCP and plugin inventory)"
 )]
 struct Cli {
     /// Selected home directory (defaults to HOME).
@@ -27,14 +27,14 @@ struct Cli {
 enum Commands {
     /// Print the application version without opening state.
     Version,
-    /// Interactive skill inventory (requires a terminal).
+    /// Interactive skill and MCP inventory (requires a terminal).
     Tui,
-    /// Fresh standalone skill inventory and explanations.
+    /// Fresh skill, MCP and plugin inventory and explanations.
     Scan {
         #[arg(long)]
         json: bool,
     },
-    /// Fresh standalone skill inventory and explanations.
+    /// Fresh skill, MCP and plugin inventory and explanations.
     List {
         #[arg(long)]
         json: bool,
@@ -80,7 +80,7 @@ fn main() -> std::process::ExitCode {
                 output::stdout(&format!("{output}\n"))?;
             } else {
                 output::stdout(&format!(
-                    "Standalone skill inventory: {} items (partial coverage).\nHome: {}\nProject: {}\nState: {}\nLast scan: {} (Unix ms)\n",
+                    "Skill/MCP inventory: {} items (partial coverage).\nHome: {}\nProject: {}\nState: {}\nLast scan: {} (Unix ms)\n",
                     inventory.items.len(),
                     output::human_path(&inventory.context.home),
                     output::human_path(&inventory.context.project),

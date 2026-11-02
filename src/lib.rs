@@ -2,6 +2,11 @@
 pub mod discovery;
 mod files;
 mod fingerprint;
+pub mod installations;
+mod json_config;
+pub mod layers;
+pub mod mcp_inventory;
+mod plugins;
 pub mod presentation;
 mod provenance;
 pub mod tui;

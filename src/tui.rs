@@ -34,7 +34,7 @@ pub fn render_selection(
     scroll: u16,
 ) {
     let mut text = format!(
-        "Standalone skills: {} | partial coverage | Last scan: {} (Unix ms)\nItem {}/{} | arrows: select | PgUp/PgDn: scroll | r: refresh | q: quit\n\n{}",
+        "Skills/MCP: {} | partial coverage | Last scan: {} (Unix ms)\nItem {}/{} | arrows: select | PgUp/PgDn: scroll | r: refresh | q: quit\n\n{}",
         inventory.items.len(),
         inventory.scanned_at_unix_ms,
         if inventory.items.is_empty() {

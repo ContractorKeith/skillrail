@@ -1,4 +1,4 @@
-# CLI contract (M1)
+# CLI contract (M2)
 
 Implemented commands: `version`, `scan [--json]`, `list [--json]`, `tui`.
 No subcommand means `tui`. `--help` and `--version` require no application state.
@@ -25,7 +25,8 @@ home, ignoring `XDG_DATA_HOME`. An explicit `--state-dir` overrides every state
 default. Relative `XDG_DATA_HOME` is ignored. No other environment variables affect path resolution; `CODEX_HOME` is not read. Tests and smokes
 supply fixture paths explicitly and never reassign HOME or CODEX_HOME.
 
-M1 reads standalone skill folders and bounded local provenance/config evidence.
+M2 reads standalone skill folders, MCP definitions and supported plugin cache
+candidates with bounded local provenance/config evidence.
 See [compatibility](compatibility.md) for supported roots and restrictions.
 Agent commands and skill content are never executed during scans.
 
@@ -39,7 +40,7 @@ terminal escapes enter JSON stdout.
 
 The version-1 object retains `schema_version`, resolved `context`,
 `scanned_at_unix_ms`, `discovery`, `items`, `occurrences`, and `diagnostics`.
-M1 fills the previously empty item/occurrence arrays with typed records:
+M1/M2 fill the item/occurrence arrays with typed records:
 
 Incomplete discovery diagnostics carry a structured `location` with `path`,
 `agent`, `scope`, and a safe failure `category`. CLI/TUI render this context with
@@ -47,16 +48,17 @@ terminal controls escaped; JSON preserves the original path. Generic diagnostics
 without a specific location omit this field. Raw operating-system error strings
 and configuration contents are never included.
 
-- Item: `id`, `kind` (`skill`), `name`, optional `description`, `source`
+- Item: `id`, `kind` (`skill` or `mcp`), `name`, optional `description`, `source`
   (`identity`, `evidence`, optional `repository`/`subpath`, `owner`),
   `name_collision`, and `drift` (`single_source`, `equal`, `drifted`, `unknown`).
 - Occurrence: stable `id`, `item_id`, `name`, `agent` (`claude`/`codex`),
-  `scope` (`user`/`project`), `original_path`, nullable `canonical_path`,
+  `scope` (`user`/`project`/`local`/`unknown`), `original_path`, nullable `canonical_path`,
   `invocations` (sorted names and per-invocation `shadowed_in_default_layout`),
   `visibility` (`status` and `reasons`), `fingerprint` (`algorithm`, nullable
   `sha256`, `diagnostics`), and metadata/target `diagnostics`.
-- Discovery: `status: standalone_skills_partial`, adapters
-  `claude_standalone_v1` and `codex_standalone_v1`.
+- Discovery: `status: inventory_partial`, adapters
+  `claude_standalone_v1`, `codex_standalone_v1`, `claude_mcp_plugins_v1` and
+  `codex_mcp_plugins_v1`.
 - Top-level diagnostics: safe `code`/`message` pairs. `coverage_partial` always
   states excluded coverage. Root failures and configuration errors add explicit
   diagnostics. Per-occurrence diagnostics must also be inspected.
@@ -76,7 +78,64 @@ paths and an explicit visibility reason. Unsafe or unreadable fallback metadata
 adds `worktree_fallback_unknown`; Codex never receives this fallback. Invocation
 precedence applies to the matching command name only, independently of source
 identity. Diagnostics remain available below the selected item's details. A small
-terminal can scroll the entire view. Search/filters, MCP and mutations remain later work.
+terminal can scroll the entire view. Search/filters, the read-only MCP protocol and mutations remain later work.
+
+## MCP and plugin records
+
+The schema-version-1 envelope and cache version remain unchanged. M2 extends
+the tagged kinds, scopes and occurrence fields. Consumers must handle new enum
+values and additive fields. M1 skill IDs, fingerprints and visibility facts are
+unchanged; the discovery coverage label and human headings now describe mixed
+inventory.
+
+Every occurrence adds `origin`, nullable `mcp`, `capability` and `observations`:
+
+- `origin.kind` is `standalone` or `plugin`. Plugin origins retain `root`,
+  `manifest`, validated `namespace`, and `configured_status` summarizing known
+  activation observations (`enabled`, `disabled`, `invalid`, `unknown`).
+- Plugin `origin.installation` has `status` (`selected`, `residual`, `unknown`),
+  optional version and evidence path. Supported Claude v2 install records give
+  selected user/project/local scope; unrelated-project records do not apply.
+  Codex store-version selection follows the pinned native algorithm, while
+  installation scope stays unknown. A cache version and activation rule are
+  separate facts; neither proves runtime visibility.
+- `observations` is a list of source-path/scope/setting/status/fixed-reason
+  records. Known user facts survive unrelated project configuration. Conflicts
+  summarize as unknown without dropping either observation. Malformed supported
+  settings are invalid; unsupported policy schemas are unknown. Claude persisted
+  project opt-outs and MCP-JSON rejection/approval lists remain separate settings.
+- `mcp` retains configured status and transport (`stdio`, `http`, `sse`,
+  `websocket`, `unknown`). Supported definitions default on; known supported
+  disables change the status to disabled. Unsupported declarations and truncated
+  plugin loading make final status unknown. This describes local configuration,
+  not complete native validation, effective trust/precedence or health.
+- `capability` retains `toggle:false` and the read-only/native-ownership reason.
+  Supported mutations belong to M4. Runtime `visibility` remains unknown.
+
+Root Claude plugin `SKILL.md` fallback retains native ownership, with one
+occurrence per applicable scope. Unrelated plugin folders are not enumerated;
+the fallback's full-folder fingerprint is explicitly unknown. All installation
+and layer facts appear in the shared human formatter/TUI and sanitized cache.
+See compatibility for exact evidence, cumulative loader budgets, conservative
+duplicate-key rejection and unresolved native behaviors.
+
+MCP item identity includes agent, scope, original configuration path, selector
+and server key. Names, command equality and URL equality never join servers.
+MCP records have null descriptions and fingerprint digests, with
+`algorithm:not_applicable` and unknown drift. Plugin skill
+identity uses plugin root and canonical skill target; matching names/content in
+other caches do not prove shared provenance. Plugin skill invocations are empty
+because runtime namespace/selection is unresolved. Ownership is `native_plugin`
+or `external_configuration` for MCP, while M1 skill ownership is retained.
+
+Only labels, paths, enums, IDs and fixed explanations cross the configuration
+parser seam. Commands, arguments, environment names/values, headers, URL parts,
+authentication objects, unknown field values and parse-error context never enter
+the public record, terminal view or SQLite. Unsafe/unsupported server labels
+are replaced with `unsupported-name`; their source keys contribute only to a
+one-way ID. Diagnostics identify the configuration file, never raw values.
+Original/canonical configuration paths identify the observed filesystem file.
+All new terminal details use the same escaping as M1.
 
 ## Cache
 

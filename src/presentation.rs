@@ -29,7 +29,7 @@ pub fn diagnostic(diagnostic: &crate::Diagnostic) -> String {
 
 pub fn details(inventory: &Inventory, selected: usize) -> String {
     let Some(item) = inventory.items.get(selected) else {
-        return "No standalone skills found in supported locations.\nCoverage is partial; see diagnostics.\n".into();
+        return "No skills or MCP entries found in supported locations.\nCoverage is partial; see diagnostics.\n".into();
     };
     let mut text = format!(
         "{} [{}]\nID: {}\nDrift: {} | Name collision: {}\nOwner: {}\nSource: {}\nEvidence: {}\n",
@@ -70,6 +70,44 @@ pub fn details(inventory: &Inventory, selected: usize) -> String {
                 .unwrap_or_else(|| "unknown".into()),
             occurrence.visibility.status
         ));
+        text.push_str(&format!(
+            "Capability: {}\n",
+            safe(occurrence.capability.reason)
+        ));
+        if let Some(mcp) = &occurrence.mcp {
+            text.push_str(&format!(
+                "Configured MCP: {} | Transport: {}\n",
+                mcp.configured_status.as_str(),
+                mcp.transport.as_str()
+            ));
+        }
+        match &occurrence.origin {
+            crate::mcp_inventory::Origin::Standalone => text.push_str("Origin: standalone\n"),
+            crate::mcp_inventory::Origin::Plugin {
+                root,
+                manifest,
+                configured_status,
+                installation,
+                ..
+            } => text.push_str(&format!(
+                "Origin: plugin | configured rule: {}\nInstallation: {} | Version: {}\nInstallation evidence: {}\nPlugin root: {}\nManifest: {}\n",
+                configured_status.as_str(),
+                installation.status,
+                safe(installation.version.as_deref().unwrap_or("unknown")),
+                installation.evidence_path.as_ref().map(|p|safe(&p.to_string_lossy())).unwrap_or_else(||"native store selection or unresolved".into()),
+                safe(&root.to_string_lossy()),
+                safe(&manifest.to_string_lossy())
+            )),
+        }
+        for observation in &occurrence.observations {
+            text.push_str(&format!(
+                "Observation: {} {:?} {} [{}]\n",
+                observation.setting,
+                observation.scope,
+                observation.status.as_str(),
+                safe(&observation.source_path.to_string_lossy())
+            ));
+        }
         for invocation in &occurrence.invocations {
             text.push_str(&format!(
                 "Invocation: {} | shadowed in default layout: {}\n",
