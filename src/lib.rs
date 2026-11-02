@@ -202,10 +202,10 @@ impl Application {
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|_| unavailable())?;
-        let version: u32 = transaction
+        let version: i64 = transaction
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(|_| unavailable())?;
-        if version != 0 && version != INDEX_VERSION {
+        if version != 0 && version != i64::from(INDEX_VERSION) {
             return Err(AppError::new(
                 "index_version_unsupported",
                 "Unsupported cache schema; remove index.sqlite3 and retry.",
@@ -222,12 +222,23 @@ impl Application {
             .map_err(|_| unavailable())?;
         let json = serde_json::to_string(inventory)
             .map_err(|_| AppError::new("output_unavailable", "Cannot encode inventory."))?;
-        transaction
+        let inserted = transaction
             .execute(
                 "INSERT INTO scan (id, inventory_json) VALUES (1, ?1)",
                 params![json],
             )
             .map_err(|_| unavailable())?;
+        // An altered schema can ignore or rewrite INSERT without returning an error.
+        let (rows, stored): (i64, String) = transaction
+            .query_row(
+                "SELECT (SELECT count(*) FROM scan), inventory_json FROM scan WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| unavailable())?;
+        if inserted != 1 || rows != 1 || stored != json {
+            return Err(unavailable());
+        }
         transaction
             .pragma_update(None, "user_version", INDEX_VERSION)
             .map_err(|_| unavailable())?;

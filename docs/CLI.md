@@ -87,6 +87,11 @@ With all Skillrail processes stopped, removing `index.sqlite3` and rerunning
 scan/list rebuilds the same normalized inventory. Unsupported schema versions
 or corrupt databases fail with a safe error; discard the cache to recover.
 Cache symlinks are refused. The cache holds no ownership or undo records.
+Snapshot replacement verifies the saved row before committing; altered schema
+objects that discard or rewrite it cause rollback. The state directory must be
+trusted: symlink refusal does not prevent a deliberately planted hard-link alias
+from naming another SQLite database. Do not share state directories with
+untrusted writers or hard-link an existing database into them.
 
 ## Errors and exits
 
