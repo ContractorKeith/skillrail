@@ -781,7 +781,9 @@ impl Application {
                 let existing = staging.read("replacement", false)?;
                 if let Some(stage) = &existing {
                     if !plan.undo
-                        || stage.bytes != c.after
+                        // An unrecorded write may have stopped at any prefix. Only
+                        // recorded stages require the complete durable snapshot.
+                        || !c.after.starts_with(&stage.bytes)
                         || c.published.as_ref().is_some_and(|p| p != stage)
                     {
                         return Err(conflict());
@@ -865,7 +867,7 @@ impl Application {
             }
         }
         if plan.undo {
-            // Delete only our exact matching staged replacements left by an interruption.
+            // Unrecorded forward writes can leave a prefix; recorded stages must match exactly.
             for c in &r.changes {
                 let d = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                 if d.chain != c.parents {
@@ -873,7 +875,9 @@ impl Application {
                 }
                 let staging = d.private_child(&c.stage)?;
                 if let Some(stage) = staging.read("replacement", false)? {
-                    if stage.bytes != c.after || c.published.as_ref().is_some_and(|p| p != &stage) {
+                    if !c.after.starts_with(&stage.bytes)
+                        || c.published.as_ref().is_some_and(|p| p != &stage)
+                    {
                         return Err(conflict());
                     }
                     staging.remove("replacement")?;

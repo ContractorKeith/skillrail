@@ -1549,6 +1549,19 @@ fn real_process_interruptions_do_not_replace_a_recorded_undo_stage_inode() {
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+ssize_t write(int fd, const void *buf, size_t count) {
+    ssize_t (*real_write)(int,const void*,size_t) = dlsym(RTLD_NEXT, "write");
+    char link[80], path[4096]; snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, path, sizeof(path)-1);
+    const char *root = getenv("SKILLRAIL_TEST_UNDO_CHILD");
+    if (n > 0 && root && getenv("SKILLRAIL_TEST_PARTIAL") && count > 1) {
+        path[n] = 0;
+        if (strncmp(path, root, strlen(root)) == 0 && strstr(path, "-undo/replacement")) {
+            real_write(fd, buf, count/2); _exit(79);
+        }
+    }
+    return real_write(fd, buf, count);
+}
 int fsync(int fd) {
     int (*real_sync)(int) = dlsym(RTLD_NEXT, "fsync");
     int result = real_sync(fd);
@@ -1570,7 +1583,7 @@ int fsync(int fd) {
             .status
             .success()
     );
-    let child = |stop: bool, fault: bool| {
+    let child_with_partial = |stop: bool, fault: bool, partial: bool| {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -1585,8 +1598,12 @@ int fsync(int fd) {
         if fault {
             command.env("LD_PRELOAD", &library);
         }
+        if partial {
+            command.env("SKILLRAIL_TEST_PARTIAL", "1");
+        }
         command.output().unwrap()
     };
+    let child = |stop, fault| child_with_partial(stop, fault, false);
     assert_eq!(child(true, false).status.code(), Some(77));
     let interrupted = child(false, true);
     assert!(matches!(interrupted.status.code(), Some(0 | 78)));
@@ -1607,6 +1624,67 @@ int fsync(int fd) {
     assert!(child(false, false).status.success());
     assert!(child(false, false).status.success());
     assert_eq!(bytes(&path), original);
+    let p = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
+    let next = a.apply(&p).unwrap().operation_id;
+    fs::write(f.path("operation-id"), next).unwrap();
+    // Repeated deaths during write_all leave only an unrecorded prefix, not a durable inode.
+    for _ in 0..3 {
+        assert_eq!(
+            child_with_partial(false, true, true).status.code(),
+            Some(79)
+        );
+    }
+    let retry = child(false, false);
+    assert!(
+        retry.status.success(),
+        "partial stage blocked recovery: {}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    assert!(child(false, false).status.success());
+    assert_eq!(bytes(&path), original);
+}
+
+#[test]
+fn recovery_cleans_unrecorded_forward_prefix_but_refuses_unrelated_bytes() {
+    use std::os::unix::fs::PermissionsExt;
+    for matching in [true, false] {
+        let f = Fixture::new();
+        let a = app(&f);
+        let path = f.path("home/.codex/config.toml");
+        let original = bytes(&path);
+        let plan = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
+        let id = plan.view().operation_id.clone();
+        a.apply_with_checkpoint(&plan, |point| {
+            if point == skillrail::mutation::Checkpoint::Recorded {
+                Err(skillrail::AppError::new("interrupted", "fixture"))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        let record: Value =
+            serde_json::from_slice(&bytes(&f.path(&format!("state/journal/{id}.json")))).unwrap();
+        let c = &record["changes"][0];
+        let stage = path.parent().unwrap().join(c["stage"].as_str().unwrap());
+        fs::create_dir(&stage).unwrap();
+        fs::set_permissions(&stage, fs::Permissions::from_mode(0o700)).unwrap();
+        let proposed: Vec<u8> = serde_json::from_value(c["after"].clone()).unwrap();
+        let partial = if matching {
+            &proposed[..proposed.len() / 2]
+        } else {
+            b"unrelated"
+        };
+        fs::write(stage.join("replacement"), partial).unwrap();
+        let result = a.apply(&a.plan_undo(&id).unwrap());
+        if matching {
+            assert_eq!(result.unwrap().status, "undone");
+            assert!(!stage.exists());
+        } else {
+            assert_eq!(result.unwrap_err().code, "mutation_conflict");
+            assert_eq!(bytes(&stage.join("replacement")), partial);
+        }
+        assert_eq!(bytes(&path), original);
+    }
 }
 
 #[test]

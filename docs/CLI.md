@@ -482,7 +482,11 @@ Use the original home/project context. Undo prechecks the complete set, restores
 only exact matching published versions, leaves never-published originals alone,
 removes files the operation created, and removes only matching stages. It retains
 the original undo plan across repeated interruptions, reusing any exact matching
-durable stage inode rather than deleting/recreating it. Repeated completed undo
+durable stage inode rather than deleting/recreating it. Recovery rebuilds an
+unrecorded partial undo stage only when its bytes are a prefix of the
+planned replacement; recorded stages still require exact bytes and identity.
+Cleanup applies the same prefix check to unrecorded forward stages.
+Repeated completed undo
 returns unchanged. A conflict preserves intervening edits and leaves the durable
 record for inspection; reconcile the conflicting file externally before retrying.
 There is no force overwrite, auto recovery on scan, or automatic forward replay.
