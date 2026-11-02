@@ -14,6 +14,8 @@ Plugin caches are observed without taking ownership or changing native lifecycle
 version evidence, uncertainty and pending native/macOS checks. CLI/TUI/MCP
 share queries over these sanitized facts. Supported native toggles preserve content
 ownership and use a private durable journal separate from the rebuildable index.
+Codex skill toggles support user scope; project skill toggles refuse because the
+pinned native resolver ignores project skill rules.
 
 ## Run
 

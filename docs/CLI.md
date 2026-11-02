@@ -361,7 +361,9 @@ No interactive CLI picker or inferred agent/scope exists. `enable`/`disable`
 preview by default. `--apply` computes and revalidates a plan, then writes it.
 To bind separate CLI invocations, pass the earlier preview's `token` with
 `--expect`; any changed target bytes/identity/permissions or observed selection
-facts refuse the write. TUI confirmation retains the actual private plan.
+facts refuse the write. The token includes the complete sanitized selection revision,
+including canonical source and fingerprint facts, plus exact consulted config bytes
+and target preconditions. TUI confirmation retains the actual private plan.
 A CLI apply without `--expect` authorizes its freshly computed plan.
 
 Mutation JSON has `schema_version:1`, `status` (`preview`, `applied`, `undone`,
@@ -379,11 +381,16 @@ Supported mechanisms and constraints are pinned in
 
 - Claude standalone skills: `skillOverrides.<name>` = `off`/`on` in user
   `.claude/settings.json` for a user occurrence, or selected-project
-  `.claude/settings.json` for a project occurrence. No skill content/link moves.
+  `.claude/settings.json` for a project occurrence. Project enable writes explicit
+  `on` when user/ancestor settings have a restrictive listing state; absence in
+  the project file is inheritance. A known restrictive local override refuses.
+  No skill content/link moves.
 - Codex standalone skills: append a canonical SKILL.md path rule to
-  `skills.config` in user `.codex/config.toml` for user occurrences, or selected
-  project `.codex/config.toml` for project occurrences. A matching final path
-  rule is updated rather than duplicated. Other rules and unknown settings stay.
+  `skills.config` in user `.codex/config.toml` for user occurrences. The pinned
+  native resolver reads only User and SessionFlags layers, ignoring project
+  `skills.config`. Project-scoped skill toggles refuse without a user-wide
+  fallback. Matching path/name precedence is checked to avoid duplicate rules.
+  Other rules and unknown settings stay.
 - Claude standalone MCP: change only the selected project's
   `projects[<absolute-project>].disabledMcpServers` list in `<home>/.claude.json`.
   This is a per-project choice, even when `--scope user` selects a user-defined
@@ -407,7 +414,9 @@ parent trees. Root-owned sticky temporary ancestors are accepted for fixtures.
 Final configuration files must be user-owned, regular, single-link files without
 write access for group/other. Symlinked configuration files/parents and extended
 ACLs are refused. Intentional skill-source links remain read-only and intact.
-TOML editing supports ordinary/inline tables and both rule array forms; JSON
+TOML editing supports ordinary/inline tables and both rule array forms. Uniform
+CRLF inputs retain CRLF; reparsing verifies that restoring line endings preserves
+literal/multiline values. Mixed LF/CRLF edits refuse unchanged. JSON
 patches replace only the selected value span or insert the missing object key.
 All bytes outside that JSON span remain identical; whitespace inside the changed
 value may normalize. Duplicate JSON keys refuse. Existing unknown keys,
@@ -426,14 +435,23 @@ the existing key behavior while search is being edited.
 
 ## Durable journal, history and recovery
 
-`<state-dir>/journal` is durable, mode 0700. Its lock and version-1 JSON operation
-records are user-owned mode 0600 regular files with exactly one link. Original
+`<state-dir>/journal` is durable, mode 0700. Its lock and JSON operation records
+are user-owned mode 0600 regular files with exactly one link. New writes use
+private schema version 2; version-1 records remain readable and are rewritten as
+version 2 on recovery. The public schema/cache/MCP contracts remain version 1.
+Version 2 stores each original/proposed byte sequence once; publication and undo
+metadata refer to those bytes instead of duplicating them. Original
 and proposed config bytes live only in these private records and private staging
 locations; they are never indexed, served by MCP or printed by history/errors.
 Do not copy journal files into a public directory. Keep the journal when deleting
 `index.sqlite3`: rebuilding the cache does not recover a deleted journal.
 Unsupported journal versions or corrupt records refuse safely; do not delete or
-rebuild them as a cache. Record size is capped at 4 MiB; aggregate history reads
+rebuild them as a cache. Record size remains capped at 4 MiB. Before admitting a
+new operation, the exact serializer sizes a worst-case complete lifecycle with
+all files published and all undo stages recorded, maximum-width future inode/owner
+metadata, longest stage names and status. Oversized operations refuse before any
+journal/config write. Repeated recovery reuses its existing plan and cannot grow
+beyond that reservation. Aggregate history reads
 at 64 MiB, with at most 10,000 operation IDs. Exact-ID undo does not enumerate the
 whole history. Operations are returned deterministically by stable operation ID.
 
@@ -463,10 +481,16 @@ skillrail --home /chosen/home --project /chosen/project --state-dir /chosen/stat
 Use the original home/project context. Undo prechecks the complete set, restores
 only exact matching published versions, leaves never-published originals alone,
 removes files the operation created, and removes only matching stages. It retains
-the original undo plan across repeated interruptions. Repeated completed undo
+the original undo plan across repeated interruptions, reusing any exact matching
+durable stage inode rather than deleting/recreating it. Repeated completed undo
 returns unchanged. A conflict preserves intervening edits and leaves the durable
 record for inspection; reconcile the conflicting file externally before retrying.
 There is no force overwrite, auto recovery on scan, or automatic forward replay.
+History is not a composable undo stack: if A disables, B enables, and undo B
+restores A's bytes through a new inode, undo A still refuses its changed inode.
+This conservative check preserves external-edit identity safety; byte equality
+alone does not authorize an older undo. Preview a new desired toggle or reconcile
+recovery explicitly instead of assuming cascade undo.
 
 The lock coordinates Skillrail mutations, not external writers. Descriptor-relative
 `openat(O_NOFOLLOW)`, owner/mode/ACL/link checks and repeated parent/identity/byte

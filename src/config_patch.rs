@@ -66,7 +66,7 @@ pub(crate) fn toml_mcp(text: &str, name: &str, enabled: bool) -> Result<String, 
         *replacement.as_value_mut().unwrap().decor_mut() = v.decor().clone();
     }
     table.insert("enabled", replacement);
-    Ok(doc.to_string())
+    finish_toml(text, doc.to_string())
 }
 pub(crate) fn toml_skill(
     text: &str,
@@ -153,5 +153,28 @@ pub(crate) fn toml_skill(
     } else {
         return Err(schema());
     }
-    Ok(doc.to_string())
+    finish_toml(text, doc.to_string())
+}
+
+// toml_edit emits LF. Restore a uniform CRLF convention only when reparsing proves
+// it does not change values (including literal/multiline strings). Mixed styles refuse.
+fn finish_toml(original: &str, edited: String) -> Result<String, AppError> {
+    let crlf = original.matches("\r\n").count();
+    if crlf == 0 {
+        return Ok(edited);
+    }
+    if crlf != original.bytes().filter(|b| *b == b'\n').count() {
+        return Err(refused(
+            "Mixed TOML line endings cannot be preserved safely; normalize them explicitly in the native configuration before retrying.",
+        ));
+    }
+    let restored = edited.replace("\r\n", "\n").replace('\n', "\r\n");
+    let expected: toml::Value = toml::from_str(&edited).map_err(|_| schema())?;
+    let actual: toml::Value = toml::from_str(&restored).map_err(|_| schema())?;
+    if actual != expected {
+        return Err(refused(
+            "TOML line-ending preservation could change literal values; no configuration was written.",
+        ));
+    }
+    Ok(restored)
 }

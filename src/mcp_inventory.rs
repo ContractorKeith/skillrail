@@ -53,7 +53,13 @@ pub struct Capability {
     pub reason: &'static str,
 }
 impl Capability {
-    pub fn standalone_skill() -> Self {
+    pub fn standalone_skill(agent: Agent, scope: Scope) -> Self {
+        if agent == Agent::Codex && scope != Scope::User {
+            return Self {
+                toggle: false,
+                reason: "Codex native skills.config reads only User and SessionFlags layers; no equally scoped project toggle is supported.",
+            };
+        }
         Self {
             toggle: true,
             reason: "Inventory is read-only; native visibility preview checks exact scope, selector collisions and filesystem safety before any write.",

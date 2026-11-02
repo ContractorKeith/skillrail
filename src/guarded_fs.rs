@@ -299,6 +299,19 @@ pub(crate) struct Snapshot {
     pub(crate) bytes: Vec<u8>,
 }
 impl Snapshot {
+    // Serialization-only upper bound; never used as a filesystem pre/postcondition.
+    pub(crate) fn reservation(bytes: &[u8]) -> Self {
+        Self {
+            identity: Identity {
+                dev: u64::MAX,
+                ino: u64::MAX,
+                mode: u32::MAX,
+                uid: u32::MAX,
+                gid: u32::MAX,
+            },
+            bytes: bytes.to_vec(),
+        }
+    }
     pub(crate) fn group(&self) -> u32 {
         self.identity.gid
     }

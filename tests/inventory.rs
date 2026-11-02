@@ -441,10 +441,30 @@ fn ancestor_boundary_shadowing_and_trust_uncertainty_are_explained() {
         "[projects]\nsecret = 'SECRET_CANARY'\n",
     );
     let uncertain = launch();
+    // Native skill rules ignore project layers; unrelated project config must not
+    // erase the known user enablement observation or imply runtime loading.
+    let codex = uncertain["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["agent"] == "codex")
+        .unwrap();
+    assert_eq!(codex["visibility"]["status"], "unknown");
     assert!(
-        uncertain
-            .to_string()
-            .contains("project trust/config unresolved")
+        codex["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["scope"] == "user"
+                && o["setting"] == "skill_enabled"
+                && o["status"] == "enabled")
+    );
+    assert!(
+        !codex["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["scope"] == "project" && o["setting"] == "skill_enabled")
     );
     assert!(!uncertain.to_string().contains("SECRET_CANARY"));
     assert!(

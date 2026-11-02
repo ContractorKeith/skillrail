@@ -76,9 +76,9 @@ M1 reports configured visibility as `unknown` with concrete observations and
 reasons. It does not claim that any session loaded a skill. User-level Codex
 TOML is bounded and parsed to explain matching enable/disable rules. A matching
 user disable is an observation, not proof that no higher-priority setting can
-override it. Project Codex config makes rule interpretation uncertain because
-trust/config layering is unresolved. Unsupported or malformed selectors never
-become a positive visibility claim. Configuration values and parser failures
+override it. Pinned native source now establishes that project `skills.config`
+is ignored; only user/session layers supply these rules. Unsupported or malformed
+selectors never become a positive visibility claim. Configuration values and parser failures
 are never emitted or cached.
 
 Claude personal/project shadowing, invocation frontmatter, and presence of
@@ -398,9 +398,14 @@ Only `--version` and executable-code inspection were used for this evidence.
 `python3 scripts/toggle-evidence.py --claude-binary /absolute/native/claude`
 checks that exact version/hash and native embedded setting definitions and
 toggle logic, then fetches two exact Codex source files at the pinned commit.
-It requires that specific Linux binary and network access to raw.githubusercontent.com;
+It requires that specific Linux binary, rustc and network access to raw.githubusercontent.com;
 an unavailable/different prerequisite fails explicitly. It is an evidence probe,
-not part of offline acceptance and not a native session-loading test.
+not part of offline acceptance and not a native session-loading test. The layer
+probe compiles the exact pinned `skill_config_rules_from_stack` function with
+small typed fixture collaborators: user/session rules participate, project/system
+rules do not, and session overrides user. Removing the source's filter is a
+negative control that must fail. This exercises the filter rather than merely
+looking for selector strings.
 The probe passed locally with:
 
 | Source | SHA-256 |
@@ -423,9 +428,11 @@ Codex evidence remains tag **rust-v0.166.0**, commit
 
 - [skills_config.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/config/src/skills_config.rs)
   defines path/name plus boolean `enabled`, canonicalizes path selectors, consumes
-  ordered enabled layers, deduplicates identical selectors and applies later
-  matching rules last. Skillrail writes canonical absolute document paths and
-  leaves broad name rules untouched. Project rules remain subject to native trust.
+  only User and SessionFlags layers (explicit filter in the rule resolver),
+  deduplicates identical selectors and applies later matching rules last.
+  Project rules are ignored even when trusted. Skillrail writes canonical
+  absolute document paths only for supported user-scoped toggles and leaves
+  broad name rules untouched. Project-scoped toggles refuse unchanged.
 - [mcp_types.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/config/src/mcp_types.rs)
   defines `McpServerConfig.enabled:bool`, default true. Skillrail patches this
   field in the selected standalone definition, never a guessed `disabled` field.
@@ -437,18 +444,21 @@ Codex evidence remains tag **rust-v0.166.0**, commit
 | Claude standalone user skill | name → on/off in `<home>/.claude/settings.json` | Refuse another Claude occurrence with the same native name |
 | Claude standalone project skill | name → on/off in selected `.claude/settings.json` | Selected-project override; ancestor source content remains untouched |
 | Codex standalone user skill | canonical SKILL.md path + enabled in user `skills.config` | Refuse another Codex occurrence addressing that same canonical source |
-| Codex standalone project skill | canonical path + enabled in selected `.codex/config.toml` | Existing parent directory; native project trust remains unresolved |
+| Codex standalone project skill | none | Native resolver ignores project skill rules; refuse without user-wide fallback |
 | Claude standalone user/project/local MCP definition | selected project's `.claude.json` `disabledMcpServers` | Per-project effect even for user definitions; no same-name competing occurrence or reserved name |
 | Codex standalone user/project MCP definition | exact definition's TOML `mcp_servers.<name>.enabled` | Refuse competing same-name occurrence/layer or uncertain definition schema |
 | Plugin skills/MCP or unknown scope | none | Refuse unchanged; use native lifecycle |
 
 Cross-agent skill aliases can be toggled safely with these native mechanisms:
-only the selected agent's config changes. Same-agent aliases/collisions that a
-native selector would affect together refuse; Skillrail does not move a shared
+only the selected agent's supported config changes. Claude project enable
+accounts for known inherited user/ancestor off/name-only/user-invocable-only
+states by writing explicit on; known restrictive local overrides refuse. Same-agent
+aliases/collisions that a native selector would affect together refuse; Skillrail does not move a shared
 source or silently widen the requested scope. Native profile, CLI, managed-policy,
 trust and session precedence remain explicit uncertainty. Known local skill
 settings now appear as `skill_enabled` observations with their exact source
-path/scope; visibility itself remains unknown. The earlier lexical-only M1
+path/scope; ignored Codex project skill rules do not become enablement
+observations. Visibility itself remains unknown. The earlier lexical-only M1
 explanation remains conservative, while M4 observations and writes use the pinned
 canonical selector evidence.
 
@@ -482,8 +492,18 @@ the stage identity before every publish. Both file and containing directories ar
 synced. Private stage directories are siblings of the destination, so renames stay
 on its filesystem. Multi-file work is recoverable, not atomically visible as a set.
 History reports prepared/applied/undoing/undone with an explicit undo recovery
-path. Undo retains its own staged/postcondition progress across repeated crashes;
+path. Private schema 2 stores originals/proposals once and references them from
+stage/undo metadata; schema-1 recovery records remain readable. Admission sizes
+the exact worst-case complete lifecycle against the unchanged 4 MiB limit,
+including all files, future maximum-width metadata and complete undo progress.
+It refuses before journal/config mutation when that reservation does not fit.
+Undo retains its plan and reuses exact durable stages across repeated crashes;
 conflicting user edits refuse unchanged. Unknown record versions fail closed.
+Strict inode preconditions intentionally prevent composing historical undos:
+A(disable), B(enable), undo B succeeds, but undo A refuses the replacement inode
+even when its bytes equal A's postcondition. No identity handoff/force cascade
+is introduced. Uniform CRLF TOML edits retain line endings with value equivalence
+checked after conversion; mixed styles refuse without touching config bytes.
 
 Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses
 `renameatx_np(RENAME_EXCL)` when the destination was absent; unsupported filesystem
@@ -522,3 +542,27 @@ The first M4 macOS CI compile at b2f61e9 found E0617: Darwin's 16-bit `mode_t`
 cannot be passed directly as a C variadic argument to `openat`. The follow-up
 uses the promoted `c_uint` argument on both platforms. Linux acceptance was
 rerun after this fix; macOS rerun results remain an integration check.
+
+### M4 round-2 corrections and local evidence
+
+The parent-reviewed `3802a76` PTY isolation fix is retained. Linux acceptance after
+round 2 passes **110 tests** (the original 70 plus 40 M4), strict Clippy/fmt,
+CLI/cache, SDK/MCP cancellation/limits and real PTY smokes. macOS acceptance
+for this new head remains CI evidence, distinct from the parent's green
+Linux/macOS baseline at `3802a76`. The strengthened native-source probe passed
+with its removed-layer-filter negative control. No native session loading was
+inferred.
+
+Failing-first regressions reproduced the unsupported Codex project write,
+source-retarget token reuse, inherited Claude off/no-op, accepted 200 KB settings
+that exceeded the old undo budget, recorded-stage inode replacement during real
+process interruption, and CRLF normalization. Tests now cover native user positive
+controls, project no-write refusal, stable/source-bound tokens, inherited
+on/off/name-only/user-invocable-only and local override refusal, single/batch
+capacity boundaries (500 KB/250 KB per-file positive controls and larger early
+refusals), schema-1 recovery, and interrupted/repeated undo. Linux's process test
+uses a fixture-scoped fsync interposer and real exit 77/78 interruptions; its fresh
+stage control proves the interposer fires, while recorded stages survive retries.
+The Linux test requires the existing C compiler prerequisite; portable stage
+recovery tests remain active on macOS. Sequential historical undo remains
+conservative, with explicit byte-preservation/conflict coverage.

@@ -320,6 +320,10 @@ fn skill_rule(o: &mut Occurrence, value: &Value, path: &Path, scope: Scope) {
             observe(o, path, scope, "skill_enabled", status);
         }
     } else {
+        // Project skills.config is ignored by the pinned native enablement resolver.
+        if scope != Scope::User {
+            return;
+        }
         let Some(rules) = value.get("skills").and_then(|v| v.get("config")) else {
             return;
         };

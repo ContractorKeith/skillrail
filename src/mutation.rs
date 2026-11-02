@@ -1,4 +1,5 @@
 //! Shared guarded visibility mutations. Public views cannot serialize recovery content.
+mod journal_record;
 use crate::{
     AppError, Application, Paths, config_patch,
     discovery::{Agent, Scope},
@@ -208,8 +209,8 @@ impl Journal {
                 "item_not_found",
                 "Operation ID was not found in this private journal.",
             ))?;
-        let record: Record = serde_json::from_slice(&bytes.bytes).map_err(|_| journal_error())?;
-        if record.version != 1
+        let record = journal_record::decode(&bytes.bytes)?;
+        if ![1, 2].contains(&record.version)
             || record.id != id
             || !["prepared", "applied", "undoing", "undone"].contains(&record.status.as_str())
             || record.changes.is_empty()
@@ -232,8 +233,8 @@ impl Journal {
         if self.dir.read(&name, true)?.as_ref() != expected {
             return Err(conflict());
         }
-        let bytes = serde_json::to_vec(record).map_err(|_| journal_error())?;
-        if bytes.len() > 4 * 1024 * 1024 {
+        let bytes = journal_record::encode(record)?;
+        if bytes.len() > journal_record::LIMIT {
             return Err(refused(
                 "Operation exceeds the 4 MiB private record budget; select fewer targets.",
             ));
@@ -349,6 +350,7 @@ impl Application {
         let op = random_id()?;
         let mut changes: Vec<Change> = vec![];
         let mut normalized = vec![];
+        let mut consulted = vec![];
         for request in requests {
             let candidates: Vec<_> = inventory
                 .occurrences
@@ -374,6 +376,11 @@ impl Application {
             if !matches!(o.origin, Origin::Standalone) {
                 return Err(refused(
                     "Plugin-owned visibility and lifecycle belong to the native agent; no plugin files or activation settings were changed.",
+                ));
+            }
+            if o.agent == Agent::Codex && o.mcp.is_none() && o.scope != Scope::User {
+                return Err(refused(
+                    "Codex native skills.config reads only User and SessionFlags layers; project-scoped skill toggles are unsupported. No user-wide fallback was written.",
                 ));
             }
             if !o.diagnostics.is_empty()
@@ -410,11 +417,9 @@ impl Application {
             let path = if o.agent == Agent::Codex {
                 if o.mcp.is_some() {
                     o.original_path.clone()
-                } else if o.scope == Scope::User {
-                    self.paths.home.join(".codex/config.toml")
                 } else {
-                    // Project rules are supported by the pinned layer stack; the selected project owns the override.
-                    self.paths.project.join(".codex/config.toml")
+                    // The native skill-rule resolver ignores project configuration layers.
+                    self.paths.home.join(".codex/config.toml")
                 }
             } else if o.mcp.is_some() {
                 self.paths.home.join(".claude.json")
@@ -514,13 +519,22 @@ impl Application {
                         "Unsupported Claude skillOverrides schema; no settings changed.",
                     ));
                 }
+                if !v.is_object() {
+                    return Err(refused(
+                        "Claude settings must be an object; no visibility state was inferred.",
+                    ));
+                }
                 let desired = if request.enabled { "on" } else { "off" };
-                if v.get("skillOverrides")
+                let local = v
+                    .get("skillOverrides")
                     .and_then(|v| v.get(&o.name))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("on")
-                    == desired
-                {
+                    .and_then(serde_json::Value::as_str);
+                let default_on = if request.enabled && o.scope == Scope::Project {
+                    claude_project_default_on(&self.paths, &o.name, &c.path, &mut consulted, &op)?
+                } else {
+                    true
+                };
+                if local == Some(desired) || (local.is_none() && request.enabled && default_on) {
                     input.clone()
                 } else {
                     config_patch::json_set(
@@ -540,14 +554,15 @@ impl Application {
                 ..request
             });
         }
-        let preconditions = changes.clone();
+        let mut preconditions = changes.clone();
+        preconditions.extend(consulted);
         changes.retain(|c| {
             (c.before.is_some() || !c.after.is_empty())
                 && c.before.as_ref().map(|s| s.bytes.as_slice()) != Some(c.after.as_slice())
         });
         let inventory_revision = Some(revision(inventory)?);
         let record = Record {
-            version: 1,
+            version: 2,
             id: op,
             status: "prepared".into(),
             context: (&self.paths).into(),
@@ -555,6 +570,7 @@ impl Application {
             changes,
             undo_changes: vec![],
         };
+        journal_record::admit(&record)?;
         make_plan(record, false, None, inventory_revision, preconditions)
     }
     pub fn operations(&self) -> Result<History, AppError> {
@@ -615,6 +631,17 @@ impl Application {
         }
         make_plan(r, true, Some(before), None, vec![])
     }
+    fn revalidate_forward(&self, plan: &Plan) -> Result<(), AppError> {
+        if plan.inventory_revision.as_ref()
+            != Some(&revision(crate::discovery::discover(&self.paths, 0))?)
+        {
+            return Err(conflict());
+        }
+        for c in &plan.preconditions {
+            check_change(c, &c.before)?;
+        }
+        Ok(())
+    }
     pub fn apply(&self, plan: &Plan) -> Result<PlanView, AppError> {
         self.apply_with_checkpoint(plan, |_| Ok(()))
     }
@@ -640,6 +667,11 @@ impl Application {
             }
             view.status = "unchanged".into();
             return Ok(view);
+        }
+        // Reject an already-stale selection before creating a private journal/lock.
+        // These optimistic checks are repeated under the application lock below.
+        if !plan.undo {
+            self.revalidate_forward(plan)?;
         }
         let j = Journal::open(&self.paths)?;
         checkpoint(Checkpoint::Locked)?;
@@ -712,14 +744,7 @@ impl Application {
                     "An interrupted operation requires recovery; inspect operations and preview undo before applying new changes.",
                 ));
             }
-            if plan.inventory_revision.as_ref()
-                != Some(&revision(crate::discovery::discover(&self.paths, 0))?)
-            {
-                return Err(conflict());
-            }
-            for c in &plan.preconditions {
-                check_change(c, &c.before)?;
-            }
+            self.revalidate_forward(plan)?;
             record_snapshot = j.save(&r, None)?;
         }
         checkpoint(Checkpoint::Recorded)?;
@@ -753,15 +778,17 @@ impl Application {
             let dir = check_change(c, &c.before)?;
             if !delete {
                 let staging = dir.private_child(&c.stage)?;
-                if let Some(stage) = staging.read("replacement", false)? {
-                    // A crash may precede saving the stage identity. Accept only exact planned bytes.
+                let existing = staging.read("replacement", false)?;
+                if let Some(stage) = &existing {
                     if !plan.undo
                         || stage.bytes != c.after
-                        || c.published.as_ref().is_some_and(|p| p != &stage)
+                        || c.published.as_ref().is_some_and(|p| p != stage)
                     {
                         return Err(conflict());
                     }
-                    staging.remove("replacement")?;
+                } else if c.published.is_some() {
+                    // A recorded stage cannot disappear without an observed publication/edit.
+                    return Err(conflict());
                 }
                 let mode = if plan.undo {
                     r.changes
@@ -782,10 +809,20 @@ impl Application {
                 } else {
                     c.before.as_ref().map(Snapshot::group)
                 };
-                staging.create("replacement", &c.after, mode, group)?;
-                let staged = staging
-                    .read("replacement", false)?
-                    .ok_or_else(journal_error)?;
+                let staged = if c.published.is_some() {
+                    // Reuse the durable inode. Recreating it before saving new evidence can
+                    // strand recovery if the process dies during the replacement's fsync.
+                    existing.ok_or_else(conflict)?
+                } else {
+                    // No identity was committed yet; an interrupted initial stage can be rebuilt.
+                    if existing.is_some() {
+                        staging.remove("replacement")?;
+                    }
+                    staging.create("replacement", &c.after, mode, group)?;
+                    staging
+                        .read("replacement", false)?
+                        .ok_or_else(journal_error)?
+                };
                 if plan.undo {
                     r.undo_changes[i].published = Some(staged);
                 } else {
@@ -887,6 +924,7 @@ fn make_plan(
         &record.context,
         &record.requests,
         &facts,
+        &inventory_revision,
         undo,
         &record_before,
     ))
@@ -958,4 +996,55 @@ fn validate_skills(input: &str) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+// Absence in a project file is inheritance, not an explicit native "on" rule.
+fn claude_project_default_on(
+    paths: &Paths,
+    name: &str,
+    target: &Path,
+    consulted: &mut Vec<Change>,
+    op: &str,
+) -> Result<bool, AppError> {
+    let mut configs = vec![(paths.home.join(".claude/settings.json"), false)];
+    for root in crate::discovery::project_ancestors(&paths.project) {
+        configs.push((root.join(".claude/settings.json"), false));
+        configs.push((root.join(".claude/settings.local.json"), true));
+    }
+    let mut default_on = true;
+    for (path, local) in configs {
+        if path == target || crate::mcp_inventory::absent(&path) {
+            continue;
+        }
+        let guard = change(path, op, 0)?;
+        let input = text(&guard.before, "{}")?;
+        let value = crate::json_config::parse(&input).map_err(|_| {
+            refused(
+                "Inherited Claude skill settings are uncertain; no default-on state was inferred.",
+            )
+        })?;
+        if !value.is_object() || value.get("skillOverrides").is_some_and(|v| !v.is_object()) {
+            return Err(refused(
+                "Inherited Claude skill settings are unsupported; no default-on state was inferred.",
+            ));
+        }
+        if let Some(state) = value.get("skillOverrides").and_then(|v| v.get(name)) {
+            match state.as_str() {
+                Some("on") => {}
+                Some("off" | "name-only" | "user-invocable-only") if local => {
+                    return Err(refused(
+                        "A local Claude skill override restricts this name; a project setting cannot safely enable it. Change that override in the native agent.",
+                    ));
+                }
+                Some("off" | "name-only" | "user-invocable-only") => default_on = false,
+                _ => {
+                    return Err(refused(
+                        "Inherited Claude skill state is unsupported; no default-on state was inferred.",
+                    ));
+                }
+            }
+        }
+        consulted.push(guard);
+    }
+    Ok(default_on)
 }

@@ -1038,9 +1038,9 @@ fn project_scope_changes_only_the_selected_agent_configuration() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|o| o["scope"] == "project")
+        .filter(|o| o["scope"] == "project" && (o["agent"] == "claude" || !o["mcp"].is_null()))
         .collect();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2);
     for o in rows {
         let agent = o["agent"].as_str().unwrap();
         let id = o["id"].as_str().unwrap();
@@ -1057,10 +1057,7 @@ fn project_scope_changes_only_the_selected_agent_configuration() {
         codex["mcp_servers"]["projectserver"]["enabled"].as_bool(),
         Some(false)
     );
-    assert_eq!(
-        codex["skills"]["config"][0]["enabled"].as_bool(),
-        Some(false)
-    );
+    assert!(codex.get("skills").is_none());
     let claude: Value =
         serde_json::from_slice(&bytes(&f.path("project/.claude/settings.json"))).unwrap();
     assert_eq!(claude["skillOverrides"]["project-skill"], "off");
@@ -1170,4 +1167,580 @@ fn repeated_skill_disable_after_another_rule_does_not_append_duplicates() {
     ]));
     assert_eq!(result["status"], "unchanged");
     assert_eq!(bytes(&f.path("home/.codex/config.toml")), original);
+}
+
+#[test]
+fn codex_project_skill_layer_refuses_without_user_scope_fallback() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.path("project/.agents/skills/project-only")).unwrap();
+    fs::create_dir_all(f.path("project/.codex")).unwrap();
+    fs::write(
+        f.path("project/.agents/skills/project-only/SKILL.md"),
+        "---\nname: project-only\ndescription: fixture\n---\n",
+    )
+    .unwrap();
+    let project_config = "# unchanged\n[skills]\nconfig=[{name='project-only',enabled=false}]\n";
+    fs::write(f.path("project/.codex/config.toml"), project_config).unwrap();
+    let user = bytes(&f.path("home/.codex/config.toml"));
+    let v = json(f.run(&["scan", "--json"]));
+    let o = v["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["agent"] == "codex" && o["scope"] == "project")
+        .unwrap();
+    let result = f.run(&[
+        "disable",
+        o["id"].as_str().unwrap(),
+        "--agent",
+        "codex",
+        "--scope",
+        "project",
+        "--apply",
+        "--json",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(4),
+        "project rules are ignored by pinned native enablement"
+    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("User and SessionFlags"));
+    assert_eq!(
+        bytes(&f.path("project/.codex/config.toml")),
+        project_config.as_bytes()
+    );
+    assert_eq!(bytes(&f.path("home/.codex/config.toml")), user);
+    assert!(!f.path("state/journal").exists());
+    assert_eq!(o["capability"]["toggle"], false);
+    assert!(
+        !o["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["setting"] == "skill_enabled" && v["scope"] == "project")
+    );
+    let user_id = v["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["agent"] == "codex" && o["scope"] == "user" && o["mcp"].is_null())
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        json(f.run(&[
+            "disable", user_id, "--agent", "codex", "--scope", "user", "--apply", "--json"
+        ]))["status"],
+        "applied"
+    );
+}
+
+#[test]
+fn source_retarget_invalidates_cli_token_and_retained_plan_without_writes() {
+    let f = Fixture::new();
+    for (name, body) in [("source-a", "A"), ("source-b", "B")] {
+        fs::create_dir(f.path(name)).unwrap();
+        fs::write(
+            f.path(&format!("{name}/SKILL.md")),
+            format!("---\nname: demo\ndescription: fixture\n---\n{body}\n"),
+        )
+        .unwrap();
+    }
+    fs::create_dir_all(f.path("home/.claude/skills")).unwrap();
+    let link = f.path("home/.claude/skills/demo");
+    std::os::unix::fs::symlink(f.path("source-a"), &link).unwrap();
+    let v = json(f.run(&["scan", "--json"]));
+    let id = v["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["agent"] == "claude")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let preview = json(f.run(&[
+        "disable", id, "--agent", "claude", "--scope", "user", "--json",
+    ]));
+    let repeat = json(f.run(&[
+        "disable", id, "--agent", "claude", "--scope", "user", "--json",
+    ]));
+    assert_eq!(preview["token"], repeat["token"]);
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(f.path("source-b"), &link).unwrap();
+    let result = f.run(&[
+        "disable",
+        id,
+        "--agent",
+        "claude",
+        "--scope",
+        "user",
+        "--expect",
+        preview["token"].as_str().unwrap(),
+        "--apply",
+        "--json",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(4),
+        "separate CLI apply accepted a different source"
+    );
+    assert!(!f.path("home/.claude/settings.json").exists());
+    assert!(!f.path("state/journal").exists());
+    let fresh = json(f.run(&[
+        "disable", id, "--agent", "claude", "--scope", "user", "--json",
+    ]));
+    assert_ne!(fresh["token"], preview["token"]);
+    let a = app(&f);
+    let plan = a
+        .plan_toggle(skillrail::mutation::ToggleRequest {
+            id: id.into(),
+            agent: "claude".into(),
+            scope: "user".into(),
+            enabled: false,
+        })
+        .unwrap();
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(f.path("source-a"), &link).unwrap();
+    assert_eq!(a.apply(&plan).unwrap_err().code, "mutation_conflict");
+    assert!(!f.path("home/.claude/settings.json").exists());
+    assert!(!f.path("state/journal").exists());
+}
+
+#[test]
+fn claude_project_enable_accounts_for_known_inherited_listing_states() {
+    for inherited in [
+        None,
+        Some("on"),
+        Some("off"),
+        Some("name-only"),
+        Some("user-invocable-only"),
+    ] {
+        let f = Fixture::new();
+        fs::create_dir_all(f.path("project/.claude/skills/demo")).unwrap();
+        fs::create_dir_all(f.path("home/.claude")).unwrap();
+        fs::write(
+            f.path("project/.claude/skills/demo/SKILL.md"),
+            "---\nname: demo\ndescription: fixture\n---\n",
+        )
+        .unwrap();
+        if let Some(state) = inherited {
+            fs::write(f.path("home/.claude/settings.json"), format!("{{\"skillOverrides\":{{\"demo\":\"{state}\"}},\"unknown\":\"PRIVATE_INHERITED_CANARY\"}}\n")).unwrap();
+        }
+        let v = json(f.run(&["scan", "--json"]));
+        let id = v["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["agent"] == "claude")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap();
+        let original_user = fs::read(f.path("home/.claude/settings.json")).ok();
+        let result = json(f.run(&[
+            "enable", id, "--agent", "claude", "--scope", "project", "--apply", "--json",
+        ]));
+        if matches!(inherited, None | Some("on")) {
+            assert_eq!(result["status"], "unchanged");
+            assert!(!f.path("project/.claude/settings.json").exists());
+            assert!(!f.path("state/journal").exists());
+        } else {
+            assert_eq!(
+                result["status"], "applied",
+                "inherited {inherited:?} was treated as on"
+            );
+            let settings: Value =
+                serde_json::from_slice(&bytes(&f.path("project/.claude/settings.json"))).unwrap();
+            assert_eq!(settings["skillOverrides"]["demo"], "on");
+        }
+        assert_eq!(
+            fs::read(f.path("home/.claude/settings.json")).ok(),
+            original_user
+        );
+        assert!(!result.to_string().contains("PRIVATE_INHERITED_CANARY"));
+    }
+}
+
+#[test]
+fn journal_admission_covers_single_and_batch_complete_recovery_lifecycle() {
+    for (batch, size) in [
+        (false, 70_000),
+        (false, 200_000),
+        (false, 500_000),
+        (false, 524_288),
+        (false, 700_000),
+        (true, 35_000),
+        (true, 100_000),
+        (true, 250_000),
+        (true, 262_144),
+        (true, 350_000),
+    ] {
+        let f = Fixture::new();
+        fs::create_dir_all(f.path("home/.claude/skills/large")).unwrap();
+        fs::write(
+            f.path("home/.claude/skills/large/SKILL.md"),
+            "---\nname: large\ndescription: fixture\n---\n",
+        )
+        .unwrap();
+        let claude = format!("{{\"unknown\":\"{}\"}}\n", "x".repeat(size));
+        fs::write(f.path("home/.claude/settings.json"), &claude).unwrap();
+        let codex = format!("# {}\n", "x".repeat(size));
+        if batch {
+            fs::write(f.path("home/.codex/config.toml"), &codex).unwrap();
+        }
+        let a = app(&f);
+        let v = a.scan().unwrap();
+        let requests = v
+            .occurrences
+            .iter()
+            .filter(|o| {
+                o.agent == skillrail::discovery::Agent::Claude || (batch && o.mcp.is_none())
+            })
+            .map(|o| skillrail::mutation::ToggleRequest {
+                id: o.id.clone(),
+                agent: if o.agent == skillrail::discovery::Agent::Claude {
+                    "claude"
+                } else {
+                    "codex"
+                }
+                .into(),
+                scope: "user".into(),
+                enabled: false,
+            })
+            .collect();
+        let plan = a.plan_toggles(requests);
+        match plan {
+            Err(error) => {
+                assert_eq!(error.code, "mutation_refused");
+                assert!(
+                    if batch {
+                        size >= 262_144
+                    } else {
+                        size >= 524_288
+                    },
+                    "small positive control was refused"
+                );
+                assert!(!f.path("state/journal").exists());
+            }
+            Ok(plan) => {
+                let op = a.apply(&plan).unwrap().operation_id;
+                let u = a.plan_undo(&op).unwrap();
+                let interrupted = a.apply_with_checkpoint(&u, |p| {
+                    if p == skillrail::mutation::Checkpoint::Staged(0) {
+                        Err(skillrail::AppError::new("interrupted", "fixture"))
+                    } else {
+                        Ok(())
+                    }
+                });
+                assert_eq!(
+                    interrupted.unwrap_err().code,
+                    "interrupted",
+                    "accepted operation cannot reach undo stage: batch={batch}, size={size}"
+                );
+                let a = app(&f);
+                a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+                a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+                assert_eq!(a.operations().unwrap().operations[0].status, "undone");
+            }
+        }
+        assert_eq!(
+            bytes(&f.path("home/.claude/settings.json")),
+            claude.as_bytes()
+        );
+        if batch {
+            assert_eq!(bytes(&f.path("home/.codex/config.toml")), codex.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn version_one_large_recovery_record_remains_readable_and_undoable() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.path("home/.claude/skills/legacy")).unwrap();
+    fs::write(
+        f.path("home/.claude/skills/legacy/SKILL.md"),
+        "---\nname: legacy\ndescription: fixture\n---\n",
+    )
+    .unwrap();
+    let original = format!("{{\"unknown\":\"{}\"}}\n", "x".repeat(200_000));
+    fs::write(f.path("home/.claude/settings.json"), &original).unwrap();
+    let a = app(&f);
+    let v = a.scan().unwrap();
+    let o = v
+        .occurrences
+        .iter()
+        .find(|o| o.agent == skillrail::discovery::Agent::Claude)
+        .unwrap();
+    let p = a
+        .plan_toggle(skillrail::mutation::ToggleRequest {
+            id: o.id.clone(),
+            agent: "claude".into(),
+            scope: "user".into(),
+            enabled: false,
+        })
+        .unwrap();
+    let op = a.apply(&p).unwrap().operation_id;
+    let path = f.path(&format!("state/journal/{op}.json"));
+    let mut legacy: Value = serde_json::from_slice(&bytes(&path)).unwrap();
+    if legacy["version"] == 2 {
+        for c in legacy["changes"].as_array_mut().unwrap() {
+            if !c["published"].is_null() {
+                c["published"] = serde_json::json!({"identity":c["published"],"bytes":c["after"]});
+            }
+        }
+        legacy["version"] = 1.into();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    }
+    a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+    a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+    assert_eq!(
+        bytes(&f.path("home/.claude/settings.json")),
+        original.as_bytes()
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes(&path)).unwrap()["version"],
+        2
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn real_process_interruptions_do_not_replace_a_recorded_undo_stage_inode() {
+    const CHILD: &str = "SKILLRAIL_TEST_UNDO_CHILD";
+    if let Some(root) = std::env::var_os(CHILD) {
+        let root = std::path::PathBuf::from(root);
+        let a = skillrail::Application::new(
+            skillrail::Paths::resolve(
+                Some(root.join("home")),
+                Some(root.join("project")),
+                Some(root.join("state")),
+            )
+            .unwrap(),
+        );
+        let id = fs::read_to_string(root.join("operation-id")).unwrap();
+        let result = a.plan_undo(&id).and_then(|p| {
+            a.apply_with_checkpoint(&p, |point| {
+                if std::env::var_os("SKILLRAIL_TEST_STOP_STAGE").is_some()
+                    && point == skillrail::mutation::Checkpoint::Staged(0)
+                {
+                    std::process::exit(77);
+                }
+                Ok(())
+            })
+        });
+        if let Err(e) = result {
+            eprintln!("{e}");
+            std::process::exit(4);
+        }
+        return;
+    }
+    let f = Fixture::new();
+    let a = app(&f);
+    let path = f.path("home/.codex/config.toml");
+    let original = bytes(&path);
+    let plan = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
+    let id = a.apply(&plan).unwrap().operation_id;
+    fs::write(f.path("operation-id"), &id).unwrap();
+    let library = f.path("fault.so");
+    let source = f.path("fault.c");
+    fs::write(&source, r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int fsync(int fd) {
+    int (*real_sync)(int) = dlsym(RTLD_NEXT, "fsync");
+    int result = real_sync(fd);
+    char link[80], path[4096]; snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, path, sizeof(path)-1);
+    const char *root = getenv("SKILLRAIL_TEST_UNDO_CHILD");
+    if (n > 0 && root) { path[n] = 0; if (strncmp(path, root, strlen(root)) == 0 && strstr(path, "-undo/replacement")) _exit(78); }
+    return result;
+}
+"#).unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .args(["-ldl", "-o"])
+            .arg(&library)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let child = |stop: bool, fault: bool| {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "real_process_interruptions_do_not_replace_a_recorded_undo_stage_inode",
+                "--nocapture",
+            ])
+            .env(CHILD, f.root.path());
+        if stop {
+            command.env("SKILLRAIL_TEST_STOP_STAGE", "1");
+        }
+        if fault {
+            command.env("LD_PRELOAD", &library);
+        }
+        command.output().unwrap()
+    };
+    assert_eq!(child(true, false).status.code(), Some(77));
+    let interrupted = child(false, true);
+    assert!(matches!(interrupted.status.code(), Some(0 | 78)));
+    let retry = child(false, false);
+    assert!(
+        retry.status.success(),
+        "retry after a real replacement-fsync interruption stranded undo: {}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    assert!(child(false, false).status.success());
+    assert_eq!(bytes(&path), original);
+    assert_eq!(a.operations().unwrap().operations[0].status, "undone");
+    // Positive fault control: a fresh unrecorded undo stage must hit the intercepted fsync.
+    let p = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
+    let next = a.apply(&p).unwrap().operation_id;
+    fs::write(f.path("operation-id"), next).unwrap();
+    assert_eq!(child(false, true).status.code(), Some(78));
+    assert!(child(false, false).status.success());
+    assert!(child(false, false).status.success());
+    assert_eq!(bytes(&path), original);
+}
+
+#[test]
+fn toml_edits_preserve_uniform_crlf_and_multiline_literal_values() {
+    for skill in [false, true] {
+        let f = Fixture::new();
+        let input = "# untouched\r\nnotes = '''first\r\nsecond\r\n'''\r\nmodel = 'PRIVATE_CRLF_CANARY'\r\n[mcp_servers.example]\r\ncommand = 'never-run'\r\n";
+        fs::write(f.path("home/.codex/config.toml"), input).unwrap();
+        let before: toml::Value = toml::from_str(input).unwrap();
+        let id = f.occurrence(if skill { "skill" } else { "mcp" });
+        let result = json(f.run(&[
+            "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
+        ]));
+        let output = String::from_utf8(bytes(&f.path("home/.codex/config.toml"))).unwrap();
+        assert!(
+            !output.replace("\r\n", "").contains('\n'),
+            "unrelated CRLF line endings changed"
+        );
+        assert!(output.contains("# untouched\r\n"));
+        assert!(output.contains("model = 'PRIVATE_CRLF_CANARY'\r\n"));
+        let after: toml::Value = toml::from_str(&output).unwrap();
+        assert_eq!(after["notes"], before["notes"]);
+        assert!(!result.to_string().contains("PRIVATE_CRLF_CANARY"));
+        json(f.run(&[
+            "undo",
+            result["operation_id"].as_str().unwrap(),
+            "--apply",
+            "--json",
+        ]));
+        assert_eq!(bytes(&f.path("home/.codex/config.toml")), input.as_bytes());
+    }
+}
+#[test]
+fn mixed_toml_line_endings_refuse_without_rewriting_literal_content() {
+    let f = Fixture::new();
+    let input = "# CRLF\r\nnotes = '''literal\nnewline'''\r\n[mcp_servers.example]\r\ncommand='never-run'\r\n";
+    fs::write(f.path("home/.codex/config.toml"), input).unwrap();
+    let id = f.occurrence("mcp");
+    let result = f.run(&[
+        "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
+    ]);
+    assert_eq!(result.status.code(), Some(4));
+    assert_eq!(bytes(&f.path("home/.codex/config.toml")), input.as_bytes());
+    assert!(!f.path("state/journal").exists());
+}
+#[test]
+fn sequential_history_undo_keeps_strict_external_identity_preconditions() {
+    let f = Fixture::new();
+    let id = f.occurrence("mcp");
+    let a = json(f.run(&[
+        "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
+    ]));
+    let b = json(f.run(&[
+        "enable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
+    ]));
+    json(f.run(&[
+        "undo",
+        b["operation_id"].as_str().unwrap(),
+        "--apply",
+        "--json",
+    ]));
+    let before = bytes(&f.path("home/.codex/config.toml"));
+    let result = f.run(&[
+        "undo",
+        a["operation_id"].as_str().unwrap(),
+        "--apply",
+        "--json",
+    ]);
+    assert_eq!(result.status.code(), Some(4));
+    assert_eq!(bytes(&f.path("home/.codex/config.toml")), before);
+}
+
+#[test]
+fn project_enable_refuses_restrictive_local_override_and_guards_consulted_user_bytes() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.path("project/.claude/skills/demo")).unwrap();
+    fs::create_dir_all(f.path("home/.claude")).unwrap();
+    fs::write(
+        f.path("project/.claude/skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: fixture\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        f.path("home/.claude/settings.json"),
+        "{\"skillOverrides\":{\"demo\":\"off\"},\"unknown\":1}\n",
+    )
+    .unwrap();
+    let v = json(f.run(&["scan", "--json"]));
+    let id = v["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["agent"] == "claude")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let preview = json(f.run(&[
+        "enable", id, "--agent", "claude", "--scope", "project", "--json",
+    ]));
+    fs::write(
+        f.path("home/.claude/settings.json"),
+        "{\"skillOverrides\":{\"demo\":\"off\"},\"unknown\":2}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        f.run(&[
+            "enable",
+            id,
+            "--agent",
+            "claude",
+            "--scope",
+            "project",
+            "--expect",
+            preview["token"].as_str().unwrap(),
+            "--apply",
+            "--json"
+        ])
+        .status
+        .code(),
+        Some(4)
+    );
+    assert!(!f.path("project/.claude/settings.json").exists());
+    assert!(!f.path("state/journal").exists());
+    for local in ["off", "name-only", "user-invocable-only"] {
+        fs::write(
+            f.path("project/.claude/settings.local.json"),
+            format!("{{\"skillOverrides\":{{\"demo\":\"{local}\"}}}}\n"),
+        )
+        .unwrap();
+        let result = f.run(&[
+            "enable", id, "--agent", "claude", "--scope", "project", "--apply", "--json",
+        ]);
+        assert_eq!(result.status.code(), Some(4));
+        assert!(!f.path("project/.claude/settings.json").exists());
+        assert!(!f.path("state/journal").exists());
+    }
 }
