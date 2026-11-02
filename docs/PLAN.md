@@ -1,6 +1,6 @@
 # Skillrail — product specification and build plan
 
-Status: approved scope, implementation pending (2026-11-02). The six-round
+Status: M0 merged in PR #9; M1 is next (2026-11-02). The six-round
 interview is recorded in [grill.md](grill.md); terminology is in
 [CONTEXT.md](../CONTEXT.md). This is the canonical spec, not a second copy of a
 GitHub issue. Keith authorized specification, tickets, and the sequential build.

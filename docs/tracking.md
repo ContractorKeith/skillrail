@@ -2,6 +2,9 @@
 
 Canonical spec: [PLAN.md](PLAN.md). All milestones run sequentially.
 
+M0 merged in [PR #9](https://github.com/ContractorKeith/skillrail/pull/9),
+including review fixes #10–#12. Next: M1.
+
 | Milestone | Issue |
 |---|---|
 | M0 — Harness and CI | [#1](https://github.com/ContractorKeith/skillrail/issues/1) |

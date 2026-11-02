@@ -6,9 +6,9 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-M0 harness implemented — 2026-11-02. Discovery adapters remain unimplemented;
-M1 supplies skill discovery. Linux local gate passes; platform CI and
-independent review evidence belong on the PR.
+M0 merged in PR #9 — 2026-11-02. Discovery adapters remain unimplemented;
+M1 supplies skill discovery. Eleven integration tests, CLI/PTY smokes and
+Linux/macOS CI pass; independent review/attack findings are fixed.
 
 ## Commands
 `bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
