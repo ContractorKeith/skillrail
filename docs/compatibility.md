@@ -13,7 +13,8 @@ macOS and disposable real-agent verification remain pending.
 - [Claude skills](https://code.claude.com/docs/en/skills): personal
   `<home>/.claude/skills/<folder>/SKILL.md`, plus `.claude/skills` at the
   selected directory and its ancestors through the nearest repository boundary.
-  Personal commands take precedence over project commands with the same name;
+  Personal command precedence is tracked per invocation (frontmatter and folder
+  names), so a conflicting folder alias does not imply the whole skill is hidden;
   nested project skills can coexist. Symlinked standalone folders are supported.
 - [Codex skills](https://developers.openai.com/codex/skills/) redirected on the
   check date to [Build skills](https://learn.chatgpt.com/docs/build-skills).
@@ -34,6 +35,35 @@ skill folders, not arbitrary recursive skill trees. Original occurrence paths
 and canonical source paths are both retained. Symlinked root/folder targets
 are intentional read roots; links *inside* a skill obey the fingerprint boundary.
 
+### Linked worktrees and invocation names
+
+The [monorepo/worktree discovery rule](https://code.claude.com/docs/en/skills#load-skills-in-monorepos-and-subdirectories)
+adds Claude's main-checkout `.claude/skills` when a linked worktree lacks a root
+`.claude/skills` directory (documented for v2.1.277+). A present directory, even
+empty, suppresses fallback. Selected nested project roots still apply. Codex
+gets no main-checkout fallback. Occurrence paths name the actual main-checkout
+entry and canonical source, with a fallback observation in visibility reasons.
+
+Resolution reads at most 8 KiB each from the worktree `.git` file and its Git
+administrative `commondir` and `gitdir` pointers. The normal
+`<main>/.git/worktrees/<id>` layout must agree in both directions. Absolute and
+relative pointers are supported; each path has at most 256 components. Symlinked
+metadata paths, malformed/missing/unreadable/over-budget pointers, ambiguous
+skills-root absence and separate/bare Git-directory layouts yield
+`worktree_fallback_unknown`. Raw pointer contents never reach output/cache. No
+Git process runs during inventory. Tests use actual disposable orphan worktrees,
+with hooks and system/global Git configuration disabled during fixture creation.
+The fixture gate requires Git with `worktree add --orphan` support.
+
+[Claude command naming](https://code.claude.com/docs/en/skills#how-a-skill-gets-its-command-name)
+allows a standalone folder name to invoke a skill in addition to its frontmatter
+name. Each occurrence now includes sorted, deduplicated `invocations` with
+`name` and `shadowed_in_default_layout`. This is a personal/project precedence
+observation for that invocation only. It never establishes source identity or
+proves runtime visibility. Different frontmatter names in two `deploy` folders
+therefore retain distinct identities while explaining personal precedence for
+`/deploy`. Codex retains its metadata name without a Claude folder alias.
+
 ## Visibility and unsupported combinations
 
 M1 reports configured visibility as `unknown` with concrete observations and
@@ -50,8 +80,9 @@ settings are explained. Claude permission rules, skillOverrides, managed
 policies, trusted project config, setting-source selection, safe/bare modes,
 CLI overrides and session state are not evaluated. Neither adapter resolves
 custom agent homes/environment variables, extra directories, enterprise/admin
-locations, bundled skills, profile selection, repository worktree fallback,
-or remote/account sessions. Coverage is explicitly partial even when empty.
+locations, bundled skills, profile selection, or remote/account sessions.
+Unsupported linked-worktree metadata layouts remain explicit uncertainty.
+Coverage is explicitly partial even when empty.
 No `/etc` agent roots are read, preserving explicit fixture isolation.
 
 The current Claude documentation confirms old `.claude/commands` files, but
@@ -68,8 +99,10 @@ are related only when local `.git/config` supplies one unambiguous `origin`
 HTTPS URL and the same repository-relative skill subpath. This is declared
 local Git evidence, **not authenticated upstream identity**. Remote config is
 never executed; includes, SSH/SCP/file remotes, Git config quoting/expansion,
-linked-worktree gitfiles, symlinked Git metadata and complex config formats
-are unsupported. These fall back to canonical identity with an explicit
+linked-worktree gitfiles (for source identity), symlinked Git metadata and
+complex config formats are unsupported. Discovery fallback uses only the bounded
+linked-worktree relationship described above; it does not expand provenance
+claims. Unsupported provenance falls back to canonical identity with an explicit
 unsupported/unavailable/unsafe evidence reason. Name/hash equality never joins
 sources. Revisions and upstream availability are not inferred.
 

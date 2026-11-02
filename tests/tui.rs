@@ -116,6 +116,7 @@ fn fixture_cli_and_tui_use_identical_inventory_and_escape_untrusted_details() {
     assert!(text.contains("Canonical:"));
     assert!(text.contains("Visibility: unknown"));
     assert!(text.contains("Fingerprint:"));
+    assert!(text.contains("Invocation:"));
     assert!(!text.contains('\u{1b}'));
     assert!(text.contains("\\u{1b}[2J"));
     selection.handle(&key(KeyCode::Up), inventory.items.len());

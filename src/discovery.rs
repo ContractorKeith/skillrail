@@ -39,10 +39,16 @@ pub struct Item {
     pub drift: &'static str,
 }
 #[derive(Debug, Serialize)]
+pub struct Invocation {
+    pub name: String,
+    pub shadowed_in_default_layout: bool,
+}
+#[derive(Debug, Serialize)]
 pub struct Occurrence {
     pub id: String,
     pub item_id: String,
     pub name: String,
+    pub invocations: Vec<Invocation>,
     pub agent: Agent,
     pub scope: Scope,
     pub original_path: PathBuf,
@@ -97,6 +103,20 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         roots.push((Agent::Claude, Scope::Project, parent.join(".claude/skills")));
         roots.push((Agent::Codex, Scope::Project, parent.join(".agents/skills")));
     }
+    let claude_fallback = match ancestors
+        .last()
+        .map(|root| crate::worktree::claude_main_skills(root))
+    {
+        Some(Ok(Some(root))) => {
+            roots.push((Agent::Claude, Scope::Project, root.clone()));
+            Some(root)
+        }
+        Some(Err(())) => {
+            inventory.diagnostics.push(diagnostic("worktree_fallback_unknown", "Claude main-checkout fallback is unknown: Git metadata or the worktree skills root is unsafe, malformed, unsupported or inaccessible."));
+            None
+        }
+        _ => None,
+    };
     let codex_config = codex_rules(&paths.home.join(".codex/config.toml"));
     if codex_config.is_err() {
         inventory.diagnostics.push(diagnostic("config_unknown", "Codex user configuration could not be safely interpreted; no raw parser or configuration data is retained."));
@@ -223,6 +243,9 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             let source = provenance::source(canonical.as_deref().unwrap_or(&original));
             let item_id = format!("skill-{}", source.identity);
             let mut reasons = vec!["Documented standalone discovery location; configured visibility does not prove session loading.".into(), "unknown: managed policy, session flags, custom configuration and trust were not resolved.".into()];
+            if agent == Agent::Claude && claude_fallback.as_ref() == Some(&root) {
+                reasons.push("Claude main-checkout fallback: linked worktree root has no .claude/skills directory; bounded Git pointers and backlink identify this main checkout. Runtime policy/trust remains unresolved.".into());
+            }
             let status = "unknown";
             if agent == Agent::Claude {
                 if fallback.starts_with("anthropic-skills") {
@@ -281,8 +304,6 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 reasons
                     .push("Metadata or target is incomplete; discoverability is unknown.".into());
             }
-            // A known personal collision suppresses the project command in the default Claude layout.
-            // Actual availability still depends on runtime policy; annotate rather than assume visibility.
             let fingerprint = canonical
                 .as_ref()
                 .map(|p| fingerprint::fingerprint(p))
@@ -304,6 +325,17 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                     drift: "unknown",
                 });
             }
+            let mut invocation_names = BTreeSet::from([name.clone()]);
+            if agent == Agent::Claude {
+                invocation_names.insert(fallback);
+            }
+            let invocations = invocation_names
+                .into_iter()
+                .map(|name| Invocation {
+                    name,
+                    shadowed_in_default_layout: false,
+                })
+                .collect();
             inventory.occurrences.push(Occurrence {
                 id: format!(
                     "occurrence-{}",
@@ -315,6 +347,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 ),
                 item_id,
                 name,
+                invocations,
                 agent,
                 scope,
                 original_path: original,
@@ -329,14 +362,16 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         .occurrences
         .iter()
         .filter(|o| o.agent == Agent::Claude && o.scope == Scope::User)
-        .map(|o| o.name.clone())
+        .flat_map(|o| o.invocations.iter().map(|i| i.name.clone()))
         .collect();
     for occurrence in &mut inventory.occurrences {
-        if occurrence.agent == Agent::Claude
-            && occurrence.scope == Scope::Project
-            && claude_user_names.contains(&occurrence.name)
-        {
-            occurrence.visibility.reasons.push("shadowed_in_default_layout: Claude personal skill has precedence over the same project command name; runtime restrictions unresolved.".into());
+        if occurrence.agent == Agent::Claude && occurrence.scope == Scope::Project {
+            for invocation in &mut occurrence.invocations {
+                if claude_user_names.contains(&invocation.name) {
+                    invocation.shadowed_in_default_layout = true;
+                    occurrence.visibility.reasons.push(format!("shadowed_in_default_layout: Claude personal skill has precedence for invocation /{} only; this does not suppress other invocation names of this skill. Runtime restrictions unresolved.", invocation.name));
+                }
+            }
         }
     }
     let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();

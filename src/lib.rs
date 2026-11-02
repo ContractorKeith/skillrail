@@ -5,6 +5,7 @@ mod fingerprint;
 pub mod presentation;
 mod provenance;
 pub mod tui;
+mod worktree;
 
 use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;

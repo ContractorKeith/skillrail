@@ -56,6 +56,13 @@ pub fn details(inventory: &Inventory, selected: usize) -> String {
                 .unwrap_or_else(|| "unknown".into()),
             occurrence.visibility.status
         ));
+        for invocation in &occurrence.invocations {
+            text.push_str(&format!(
+                "Invocation: {} | shadowed in default layout: {}\n",
+                safe(&invocation.name),
+                invocation.shadowed_in_default_layout
+            ));
+        }
         for reason in &occurrence.visibility.reasons {
             text.push_str(&format!("  {}\n", safe(reason)));
         }

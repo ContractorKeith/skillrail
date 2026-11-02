@@ -46,6 +46,7 @@ M1 fills the previously empty item/occurrence arrays with typed records:
   `name_collision`, and `drift` (`single_source`, `equal`, `drifted`, `unknown`).
 - Occurrence: stable `id`, `item_id`, `name`, `agent` (`claude`/`codex`),
   `scope` (`user`/`project`), `original_path`, nullable `canonical_path`,
+  `invocations` (sorted names and per-invocation `shadowed_in_default_layout`),
   `visibility` (`status` and `reasons`), `fingerprint` (`algorithm`, nullable
   `sha256`, `diagnostics`), and metadata/target `diagnostics`.
 - Discovery: `status: standalone_skills_partial`, adapters
@@ -64,8 +65,12 @@ escape terminal controls and bidirectional formatting controls.
 Plain list/scan prints context, scan time and every item's explanations.
 The TUI uses exactly the same inventory and human explanation formatter: arrows
 select items, PgUp/PgDn scroll details, `r` rescans, q/Esc/Ctrl-C quit.
-Diagnostics remain available below the selected item's details. A small terminal
-can scroll the entire view. Search/filters, MCP and mutations remain later work.
+Claude linked-worktree fallback entries retain main-checkout original/canonical
+paths and an explicit visibility reason. Unsafe or unreadable fallback metadata
+adds `worktree_fallback_unknown`; Codex never receives this fallback. Invocation
+precedence applies to the matching command name only, independently of source
+identity. Diagnostics remain available below the selected item's details. A small
+terminal can scroll the entire view. Search/filters, MCP and mutations remain later work.
 
 ## Cache
 
