@@ -55,17 +55,17 @@ pub struct Capability {
 impl Capability {
     pub fn standalone_skill() -> Self {
         Self {
-            toggle: false,
-            reason: "M2 is read-only; skill visibility mutations are not implemented.",
+            toggle: true,
+            reason: "Inventory is read-only; native visibility preview checks exact scope, selector collisions and filesystem safety before any write.",
         }
     }
     fn mcp(plugin: bool) -> Self {
         Self {
-            toggle: false,
+            toggle: !plugin,
             reason: if plugin {
-                "M2 is read-only; plugin content and lifecycle remain owned by the native agent."
+                "Inventory is read-only; plugin content and lifecycle remain owned by the native agent."
             } else {
-                "M2 is read-only; standalone MCP mutations are not implemented."
+                "Inventory is read-only; standalone native toggle preview checks scope, schema and selector collisions before any write."
             },
         }
     }

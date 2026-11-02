@@ -1,4 +1,4 @@
-# CLI contract (M3)
+# CLI contract (M4)
 
 Implemented commands:
 
@@ -10,6 +10,10 @@ skillrail list [filters] [--json]
 skillrail search <query> [filters] [--json]
 skillrail show <id> [--json]
 skillrail drift [filters] [--json]
+skillrail enable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
+skillrail disable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
+skillrail operations [--json]
+skillrail undo <operation-id> [--apply] [--json]
 skillrail mcp
 ```
 
@@ -17,7 +21,7 @@ No subcommand means `tui`. `--help` and `--version` require no application state
 Filters: `--kind skill|mcp`, `--agent claude|codex`,
 `--scope user|project|local|unknown`, `--limit 1..200` (default 100),
 `--offset 0..1000000` (default 0), `--revision <64-lowercase-hex>`.
-Global paths below apply to every command. No mutation commands are implemented.
+Global paths below apply to every command. Install/update/uninstall remain M5/M6.
 
 ## Paths and isolation
 
@@ -26,7 +30,7 @@ subcommand. Explicit flags take precedence. Relative paths resolve against the
 process working directory. Home and project must exist and be directories;
 paths must be UTF-8. Output context contains absolute, canonical paths, with
 symlinks resolved. State is created if necessary after home/project validation.
-Only the state directory receives application writes.
+Reads write only the rebuildable cache. Explicit applied mutations also write the previewed configuration paths and private sibling staging directories.
 
 | Path | Default |
 |---|---|
@@ -102,7 +106,7 @@ paths and an explicit visibility reason. Unsafe or unreadable fallback metadata
 adds `worktree_fallback_unknown`; Codex never receives this fallback. Invocation
 precedence applies to the matching command name only, independently of source
 identity. Diagnostics remain available below the selected item's details. A small
-terminal can scroll the entire view. Mutations remain later work.
+terminal can scroll the entire view. See the M4 mutation controls below.
 
 ## MCP and plugin records
 
@@ -133,8 +137,8 @@ Every occurrence adds `origin`, nullable `mcp`, `capability` and `observations`:
   disables change the status to disabled. Unsupported declarations and truncated
   plugin loading make final status unknown. This describes local configuration,
   not complete native validation, effective trust/precedence or health.
-- `capability` retains `toggle:false` and the read-only/native-ownership reason.
-  Supported mutations belong to M4. Runtime `visibility` remains unknown.
+- `capability` reports native toggle availability plus the read-only inventory/native-ownership explanation.
+  M4 advertises a native toggle preview for standalone entries; each preview still checks schema, selectors and filesystem safety. Plugin capabilities remain refused. Runtime `visibility` remains unknown.
 
 Root Claude plugin `SKILL.md` fallback retains native ownership, with one
 occurrence per applicable scope. Unrelated plugin folders are not enumerated;
@@ -186,7 +190,7 @@ untrusted writers or hard-link an existing database into them.
 Exit 0 means a completed scan/cache replacement, including explicit unknown or
 partial inventory states. Operational errors exit 1; argument errors
 exit 2. `show` with an unknown stable item ID exits 3 (`item_not_found`).
-Exit 4 remains reserved for future refused mutations.
+Mutation conflicts, unsafe paths, unsupported native changes and busy mutation locks exit 4.
 
 Operational errors produce no stdout. With any inventory command using `--json`, stderr
 contains one object of this form:
@@ -348,3 +352,137 @@ args = ["--project", "/absolute/project", "mcp"]
 Use actual absolute paths. These examples select project context explicitly;
 native approval/trust remains the client's responsibility. They make no claim
 that any current session loaded the server.
+
+## M4 guarded visibility changes
+
+Both `--agent` and occurrence `--scope` are required. An item ID works only when
+one occurrence matches; otherwise use the exact occurrence ID from `scan`/`show`.
+No interactive CLI picker or inferred agent/scope exists. `enable`/`disable`
+preview by default. `--apply` computes and revalidates a plan, then writes it.
+To bind separate CLI invocations, pass the earlier preview's `token` with
+`--expect`; any changed target bytes/identity/permissions or observed selection
+facts refuse the write. TUI confirmation retains the actual private plan.
+A CLI apply without `--expect` authorizes its freshly computed plan.
+
+Mutation JSON has `schema_version:1`, `status` (`preview`, `applied`, `undone`,
+`unchanged`), `action` (`toggle` or `undo`), a random stable `operation_id`,
+opaque `token`, exact normalized `targets` (occurrence ID, agent, scope,
+requested enablement), `files`, safe file `changes` (create/replace/restore/remove),
+and fixed explanatory `notes`. It contains no raw configuration, field values,
+commands, arguments, credentials or backups. Undo targets describe the original
+operation; `action:undo` and each change explicitly indicate restoration.
+A no-op creates no operation record. Its provisional preview ID is not history.
+Plain output is the same safe object, indented, with terminal controls escaped.
+
+Supported mechanisms and constraints are pinned in
+[compatibility](compatibility.md#m4-native-toggle-evidence-and-support):
+
+- Claude standalone skills: `skillOverrides.<name>` = `off`/`on` in user
+  `.claude/settings.json` for a user occurrence, or selected-project
+  `.claude/settings.json` for a project occurrence. No skill content/link moves.
+- Codex standalone skills: append a canonical SKILL.md path rule to
+  `skills.config` in user `.codex/config.toml` for user occurrences, or selected
+  project `.codex/config.toml` for project occurrences. A matching final path
+  rule is updated rather than duplicated. Other rules and unknown settings stay.
+- Claude standalone MCP: change only the selected project's
+  `projects[<absolute-project>].disabledMcpServers` list in `<home>/.claude.json`.
+  This is a per-project choice, even when `--scope user` selects a user-defined
+  server. It is not a global disable and does not change approval lists.
+- Codex standalone MCP: change `mcp_servers.<name>.enabled` in the exact
+  definition's user or ancestor project TOML file.
+
+A selector that also addresses another observed occurrence/scope refuses,
+including same-agent aliases to one canonical skill. Plugin lifecycle/content,
+unknown scopes, invalid/unsupported schemas, reserved Claude MCP names and
+uncertain targets refuse unchanged. Safe shared-source skill toggles use native
+config only; disabling by moving/editing that source is never attempted. Native
+managed policy, trust, alternate setting sources and live session state remain
+unresolved; the operation changes the stated local setting, not a running session.
+Other settings may still restrict loading. Do not infer runtime visibility.
+
+Config parent directories must already exist, be owned by the user/root and
+not be group/other-writable. Create a missing agent config directory with its
+native setup before retrying; Skillrail does not silently create authoritative
+parent trees. Root-owned sticky temporary ancestors are accepted for fixtures.
+Final configuration files must be user-owned, regular, single-link files without
+write access for group/other. Symlinked configuration files/parents and extended
+ACLs are refused. Intentional skill-source links remain read-only and intact.
+TOML editing supports ordinary/inline tables and both rule array forms; JSON
+patches replace only the selected value span or insert the missing object key.
+All bytes outside that JSON span remain identical; whitespace inside the changed
+value may normalize. Duplicate JSON keys refuse. Existing unknown keys,
+credential values, owner/group and regular permission bits are preserved; new config files
+use mode 0600. ACL-bearing paths and nonregular configs refuse. Other extended attributes and
+file flags are not backed up/restored; this journal guarantees exact bytes and
+ordinary ownership/permission bits, not every filesystem metadata extension.
+
+TUI: `e` enable / `b` disable opens an occurrence picker showing agent, scope,
+path and ID. Arrows select and Enter builds a preview. A second Enter applies;
+Escape cancels. `h` opens history, arrows select an operation, `u` previews undo,
+then Enter confirms or Escape cancels. PgUp/PgDn scroll modal views. Mutation
+errors remain visible in the TUI; a successful apply refreshes inventory.
+Ctrl-C quits and attempts restoration from every screen. Search text retains
+the existing key behavior while search is being edited.
+
+## Durable journal, history and recovery
+
+`<state-dir>/journal` is durable, mode 0700. Its lock and version-1 JSON operation
+records are user-owned mode 0600 regular files with exactly one link. Original
+and proposed config bytes live only in these private records and private staging
+locations; they are never indexed, served by MCP or printed by history/errors.
+Do not copy journal files into a public directory. Keep the journal when deleting
+`index.sqlite3`: rebuilding the cache does not recover a deleted journal.
+Unsupported journal versions or corrupt records refuse safely; do not delete or
+rebuild them as a cache. Record size is capped at 4 MiB; aggregate history reads
+at 64 MiB, with at most 10,000 operation IDs. Exact-ID undo does not enumerate the
+whole history. Operations are returned deterministically by stable operation ID.
+
+Apply checks all preconditions under the shared journal lock and durably records
+intent, originals, postconditions and staging names before publishing any config.
+Each config replacement is staged on its own filesystem inside a user-private
+0700 sibling directory, preserving its original permission bits inside that
+private directory. The stage is synced, its exact identity is recorded and synced,
+then the target and stage are checked again before descriptor-relative rename.
+Journal updates also use staged, synced replacements. Directory entries are synced.
+Creating a missing target uses Linux `RENAME_NOREPLACE` / macOS `RENAME_EXCL` and
+refuses unsupported filesystems; a late external creator cannot be overwritten.
+Replacing an existing target publishes the complete new file by atomic rename.
+Several files are **not** one filesystem transaction: each published replacement
+can be observed before the next file changes.
+
+`operations` exposes only IDs, states, safe target selectors, changed-file counts
+and fixed recovery guidance. States are `prepared`, `applied`, `undoing`, `undone`.
+If interrupted while prepared/undoing, new forward mutations refuse. Run:
+
+```bash
+skillrail --home /chosen/home --project /chosen/project --state-dir /chosen/state operations --json
+skillrail --home /chosen/home --project /chosen/project --state-dir /chosen/state undo op-0123456789abcdef0123456789abcdef --json
+skillrail --home /chosen/home --project /chosen/project --state-dir /chosen/state undo op-0123456789abcdef0123456789abcdef --apply --json
+```
+
+Use the original home/project context. Undo prechecks the complete set, restores
+only exact matching published versions, leaves never-published originals alone,
+removes files the operation created, and removes only matching stages. It retains
+the original undo plan across repeated interruptions. Repeated completed undo
+returns unchanged. A conflict preserves intervening edits and leaves the durable
+record for inspection; reconcile the conflicting file externally before retrying.
+There is no force overwrite, auto recovery on scan, or automatic forward replay.
+
+The lock coordinates Skillrail mutations, not external writers. Descriptor-relative
+`openat(O_NOFOLLOW)`, owner/mode/ACL/link checks and repeated parent/identity/byte
+checks detect observed substitution without following external symlink targets.
+Existing-file replacement/unlink has no portable compare-and-swap tied to an
+expected inode: an external same-user process can still edit/rename between the
+last check and the syscall. Post-write checks report detected races; private
+originals and planned postconditions remain recoverable. No guarantee is made
+against hostile same-user/root writers, concurrent permission/ACL changes after
+checks, network filesystem semantics, or storage that lies about fsync durability.
+Do not concurrently edit mutation targets with native agents. macOS's descriptor
+and exclusive-rename paths require actual CI/native validation; Linux results do
+not certify them.
+
+New errors: `mutation_refused` / `mutation_conflict` exit 4, `mutation_io` /
+`journal_invalid` exit 1; malformed selectors/operation IDs exit 2; unmatched
+item/occurrence or missing valid operation IDs exit 3. JSON errors retain the
+existing stderr-only schema. Clap usage errors remain text. Interrupted records
+can remain even when a failed apply published no target; inspect history and undo.

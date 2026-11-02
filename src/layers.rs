@@ -101,6 +101,9 @@ pub(crate) fn discover(paths: &Paths, inventory: &mut Inventory) {
                 .iter_mut()
                 .filter(|o| o.agent == agent)
             {
+                if o.mcp.is_none() && matches!(o.origin, Origin::Standalone) {
+                    skill_rule(o, &value, &path, scope);
+                }
                 if agent == Agent::Claude
                     && o.mcp.is_some()
                     && o.scope == Scope::Project
@@ -294,5 +297,57 @@ fn list_choice(
                 Status::Enabled
             },
         );
+    }
+}
+
+// These are local settings observations, never proof of effective session visibility.
+fn skill_rule(o: &mut Occurrence, value: &Value, path: &Path, scope: Scope) {
+    if o.agent == Agent::Claude {
+        let Some(rules) = value.get("skillOverrides") else {
+            return;
+        };
+        if !rules.is_object() {
+            observe(o, path, scope, "skill_enabled", Status::Invalid);
+            return;
+        }
+        if let Some(rule) = rules.get(&o.name) {
+            let status = match rule.as_str() {
+                Some("on") => Status::Enabled,
+                Some("off") => Status::Disabled,
+                Some("name-only" | "user-invocable-only") => Status::Unknown,
+                _ => Status::Invalid,
+            };
+            observe(o, path, scope, "skill_enabled", status);
+        }
+    } else {
+        let Some(rules) = value.get("skills").and_then(|v| v.get("config")) else {
+            return;
+        };
+        let Some(rules) = rules.as_array() else {
+            observe(o, path, scope, "skill_enabled", Status::Invalid);
+            return;
+        };
+        let mut last = None;
+        for rule in rules {
+            let matches = rule.get("name").and_then(Value::as_str).map(str::trim)
+                == Some(o.name.as_str())
+                || rule.get("path").and_then(Value::as_str).is_some_and(|p| {
+                    let p = std::path::Path::new(p);
+                    let canonical = p.canonicalize().unwrap_or_else(|_| p.to_owned());
+                    o.canonical_path
+                        .as_ref()
+                        .is_some_and(|c| canonical == c.join("SKILL.md"))
+                });
+            if matches {
+                last = Some(
+                    rule.get("enabled")
+                        .map(bool_status)
+                        .unwrap_or(Status::Invalid),
+                );
+            }
+        }
+        if let Some(status) = last {
+            observe(o, path, scope, "skill_enabled", status);
+        }
     }
 }
