@@ -5,7 +5,10 @@ Canonical spec: [PLAN.md](PLAN.md). All milestones run sequentially.
 M0 merged in [PR #9](https://github.com/ContractorKeith/skillrail/pull/9),
 including review fixes #10–#12. M1 merged in
 [PR #13](https://github.com/ContractorKeith/skillrail/pull/13) after independent
-reviews/attack and Linux/macOS CI. Next: M2.
+reviews/attack and Linux/macOS CI. M2 merged in
+[PR #16](https://github.com/ContractorKeith/skillrail/pull/16) at 771161a after
+independent reviews, adversarial fixes and Linux/macOS CI (59 tests).
+Next: M3.
 
 | Milestone | Issue |
 |---|---|

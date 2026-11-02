@@ -6,10 +6,11 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-M1 merged at 4602b19. M2 adds sanitized standalone MCP definitions and
-plugin-owned skill/MCP cache candidates; see docs/compatibility.md for supported
-schemas, source evidence and explicit uncertainty. Independent review/attack
-and macOS/native-agent verification remain orchestrator gates.
+M2 merged at 771161a after independent Standards/Spec reviews, adversarial
+fixes and Linux/macOS CI (59 tests). Sanitized MCP and plugin inventory is
+implemented; docs/compatibility.md records supported schemas and uncertainty.
+Next: M3 shared queries and read-only MCP. Broader native-session verification
+remains a release gate.
 
 ## Commands
 `bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
