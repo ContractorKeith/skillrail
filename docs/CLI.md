@@ -293,6 +293,11 @@ there is no next cursor, and supplying a cursor is invalid.
 All tool argument objects reject unknown fields; types/ranges match CLI queries.
 Missing/invalid arguments, unknown tool names and invalid tools/list cursors return
 JSON-RPC `-32602` with fixed safe text. Unavailable methods/resources use `-32601`.
+SDK envelope-decoding exception: a non-string tool `name` or non-object
+`arguments` in outer `tools/call` params returns `-32601` before the tool
+handler runs. The pinned SDK dispatches these as unrecognized requests; this
+does not mean the named tool is unavailable. Well-formed argument objects
+reach Skillrail validation and use `-32602` for invalid fields/values.
 Unknown IDs and operational query failures return normal MCP tool results with
 `isError:true` and text JSON `{schema_version:1,error:{code,message}}`. Success
 uses `isError:false` and one `content` text block containing the exact shared

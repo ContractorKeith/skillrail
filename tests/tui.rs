@@ -257,6 +257,19 @@ fn search_filters_details_and_refresh_use_one_timestamped_snapshot() {
     assert!(text.contains(&inventory.scanned_at_unix_ms.to_string()));
     view.handle(&key(KeyCode::Char('a')), &inventory);
     assert!(view.query.indices(&inventory).is_empty());
+    terminal
+        .draw(|frame| view.render(frame, &inventory))
+        .unwrap();
+    let no_matches: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(no_matches.contains("No items match the current search/filters."));
+    assert!(!no_matches.contains("No skills or MCP entries found"));
+    assert!(no_matches.contains("Skills/MCP: 2"));
     view.handle(&key(KeyCode::Char('a')), &inventory);
     assert_eq!(view.query.indices(&inventory).len(), 1);
     view.handle(&key(KeyCode::Char('k')), &inventory);

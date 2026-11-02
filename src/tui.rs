@@ -52,7 +52,11 @@ fn render_view(
             selected + 1
         },
         inventory.items.len(),
-        crate::presentation::details(inventory, selected)
+        if !inventory.items.is_empty() && selected >= inventory.items.len() {
+            "No items match the current search/filters.\n".into()
+        } else {
+            crate::presentation::details(inventory, selected)
+        }
     );
     text.push_str(&format!(
         "\nHome: {}\nProject: {}\nState: {}\n",

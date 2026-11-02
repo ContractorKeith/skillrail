@@ -94,6 +94,15 @@ def scenario(binary, root, version):
             response = client.request(ident, method, params)
             assert response["error"]["code"] == -32602, response
         # No raw resources, skill bodies or mutation capability.
+        # The pinned SDK rejects malformed outer params before tool validation.
+        for ident, params in [
+            (40, {"name": "get_item", "arguments": []}),
+            (41, {"name": 42, "arguments": {}}),
+            (42, {"name": "get_item", "arguments": "OUTER_CANARY"}),
+        ]:
+            response = client.request(ident, "tools/call", params)
+            assert response["error"]["code"] == -32601, response
+            assert "OUTER_CANARY" not in json.dumps(response)
         resources = client.request(9, "resources/read", {"uri": "file:///SKILL.md"})
         assert resources["error"]["code"] == -32601, resources
         client.request(10, "tools/call", {"name": "list_inventory", "arguments": {}})
