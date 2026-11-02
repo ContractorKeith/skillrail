@@ -1,13 +1,16 @@
 //! Shared application core and verified transactional cache.
+mod config_patch;
 pub mod discovery;
 mod files;
 mod fingerprint;
+mod guarded_fs;
 pub mod installations;
 mod json_config;
 pub mod layers;
 pub mod mcp_inventory;
 pub mod mcp_server;
 mod mcp_transport;
+pub mod mutation;
 mod plugins;
 pub mod presentation;
 mod provenance;

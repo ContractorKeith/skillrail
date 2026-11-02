@@ -118,6 +118,8 @@ pub enum Action {
     Continue,
     Refresh,
     Quit,
+    Toggle(bool),
+    History,
 }
 impl View {
     pub fn handle(&mut self, event: &Event, inventory: &Inventory) -> Action {
@@ -180,6 +182,9 @@ impl View {
                 );
                 true
             }
+            KeyCode::Char('e') => return Action::Toggle(true),
+            KeyCode::Char('b') => return Action::Toggle(false),
+            KeyCode::Char('h') => return Action::History,
             KeyCode::Char('r') => return Action::Refresh,
             KeyCode::Char('x') => {
                 self.query = crate::query::Query::default();
@@ -201,7 +206,7 @@ impl View {
             .copied()
             .unwrap_or(usize::MAX);
         let header = format!(
-            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {}\n",
+            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {} | e: enable  b: disable  h: history\n",
             crate::presentation::safe(self.query.query.as_deref().unwrap_or("")),
             if self.editing { "_" } else { "" },
             self.query.kind.as_deref().unwrap_or("all"),
@@ -247,6 +252,7 @@ pub fn run(application: &Application) -> Result<(), AppError> {
     require_terminal()?;
     let mut inventory = application.scan()?;
     let mut view = View::default();
+    let mut mutations = MutationUi::default();
     let io_error = || {
         AppError::new(
             "terminal_unavailable",
@@ -257,9 +263,24 @@ pub fn run(application: &Application) -> Result<(), AppError> {
     let mut terminal = ratatui::try_init().map_err(|_| io_error())?;
     loop {
         terminal
-            .draw(|frame| view.render(frame, &inventory))
+            .draw(|frame| {
+                if mutations.active() {
+                    mutations.render(frame)
+                } else {
+                    view.render(frame, &inventory)
+                }
+            })
             .map_err(|_| io_error())?;
         let event = event::read().map_err(|_| io_error())?;
+        if let Event::Key(key) = &event
+            && key.code == KeyCode::Char('c')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            return Ok(());
+        }
+        if mutations.handle(&event, application, &mut inventory) {
+            continue;
+        }
         match view.handle(&event, &inventory) {
             Action::Quit => return Ok(()),
             Action::Refresh => {
@@ -267,7 +288,219 @@ pub fn run(application: &Application) -> Result<(), AppError> {
                 view.refreshed(&inventory);
             }
             Action::Continue => {}
+            Action::Toggle(enabled) => mutations.toggle(enabled, &view, &inventory),
+            Action::History => mutations.history(application),
         }
         // Resize and other events redraw on the next iteration.
+    }
+}
+
+/// Mutation screens retain the actual private plan between preview and confirmation.
+#[derive(Default)]
+pub struct MutationUi {
+    screen: MutationScreen,
+    selected: usize,
+    scroll: u16,
+}
+#[derive(Default)]
+enum MutationScreen {
+    #[default]
+    Closed,
+    Picker(Vec<(crate::mutation::ToggleRequest, String)>),
+    Preview(Box<crate::mutation::Plan>),
+    History(crate::mutation::History),
+    Message(String),
+}
+impl MutationUi {
+    pub fn active(&self) -> bool {
+        !matches!(self.screen, MutationScreen::Closed)
+    }
+    pub fn toggle(&mut self, enabled: bool, view: &View, inventory: &Inventory) {
+        let item = view
+            .query
+            .indices(inventory)
+            .get(view.selection.item)
+            .copied();
+        let Some(item) = item else {
+            self.screen = MutationScreen::Message("No selected item.".into());
+            return;
+        };
+        let choices = inventory
+            .occurrences
+            .iter()
+            .filter(|o| o.item_id == inventory.items[item].id)
+            .map(|o| {
+                let agent = match o.agent {
+                    crate::discovery::Agent::Claude => "claude",
+                    crate::discovery::Agent::Codex => "codex",
+                };
+                let scope = match o.scope {
+                    crate::discovery::Scope::User => "user",
+                    crate::discovery::Scope::Project => "project",
+                    crate::discovery::Scope::Local => "local",
+                    crate::discovery::Scope::Unknown => "unknown",
+                };
+                (
+                    crate::mutation::ToggleRequest {
+                        id: o.id.clone(),
+                        agent: agent.into(),
+                        scope: scope.into(),
+                        enabled,
+                    },
+                    format!(
+                        "{} | {} | {} | {}",
+                        agent,
+                        scope,
+                        crate::presentation::safe(&o.original_path.to_string_lossy()),
+                        o.id
+                    ),
+                )
+            })
+            .collect();
+        self.screen = MutationScreen::Picker(choices);
+        self.selected = 0;
+        self.scroll = 0;
+    }
+    pub fn history(&mut self, application: &Application) {
+        self.screen = match application.operations() {
+            Ok(h) => MutationScreen::History(h),
+            Err(e) => MutationScreen::Message(e.to_string()),
+        };
+        self.selected = 0;
+        self.scroll = 0;
+    }
+    /// Returns true when a modal screen consumed this event.
+    pub fn handle(
+        &mut self,
+        event: &Event,
+        application: &Application,
+        inventory: &mut Inventory,
+    ) -> bool {
+        if !self.active() {
+            return false;
+        }
+        let Event::Key(key) = event else {
+            return true;
+        };
+        if key.kind != KeyEventKind::Press {
+            return true;
+        }
+        if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
+            self.screen = MutationScreen::Closed;
+            return true;
+        }
+        match key.code {
+            KeyCode::Down => {
+                self.selected = self.selected.saturating_add(1);
+            }
+            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(5),
+            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(5),
+            KeyCode::Enter => {
+                let screen = std::mem::take(&mut self.screen);
+                self.screen = match screen {
+                    MutationScreen::Picker(choices) => {
+                        match choices.get(self.selected.min(choices.len().saturating_sub(1))) {
+                            Some((request, _)) => match application.plan_toggle(request.clone()) {
+                                Ok(plan) => MutationScreen::Preview(Box::new(plan)),
+                                Err(e) => MutationScreen::Message(e.to_string()),
+                            },
+                            None => MutationScreen::Message("No occurrence selected.".into()),
+                        }
+                    }
+                    MutationScreen::Preview(plan) => match application.apply(&plan) {
+                        Ok(result) => match application.scan() {
+                            Ok(fresh) => {
+                                *inventory = fresh;
+                                MutationScreen::Message(format!(
+                                    "Operation {}: {}. h: history after closing this message.",
+                                    result.operation_id, result.status
+                                ))
+                            }
+                            Err(e) => MutationScreen::Message(format!(
+                                "Operation applied; inventory refresh failed: {e}. Inspect history before retrying."
+                            )),
+                        },
+                        Err(e) => MutationScreen::Message(e.to_string()),
+                    },
+                    other => other,
+                };
+                self.scroll = 0;
+            }
+            KeyCode::Char('u') => {
+                if let MutationScreen::History(h) = &self.screen
+                    && let Some(op) = h
+                        .operations
+                        .get(self.selected.min(h.operations.len().saturating_sub(1)))
+                {
+                    self.screen = match application.plan_undo(&op.operation_id) {
+                        Ok(plan) => MutationScreen::Preview(Box::new(plan)),
+                        Err(e) => MutationScreen::Message(e.to_string()),
+                    };
+                    self.scroll = 0;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+    pub fn render(&self, frame: &mut Frame<'_>) {
+        let text = match &self.screen {
+            MutationScreen::Closed => String::new(),
+            MutationScreen::Picker(choices) => {
+                let selected = self.selected.min(choices.len().saturating_sub(1));
+                let mut text = String::from(
+                    "Select exact occurrence | arrows: select | Enter: preview | Esc: cancel\n",
+                );
+                for (i, (_, description)) in choices.iter().enumerate() {
+                    text.push_str(&format!(
+                        "{} {}\n",
+                        if i == selected { ">" } else { " " },
+                        description
+                    ));
+                }
+                text
+            }
+            MutationScreen::Preview(plan) => format!(
+                "Preview | Enter: apply | Esc: cancel | PgUp/PgDn: scroll\n{}",
+                serde_json::to_string_pretty(plan.view())
+                    .unwrap_or_else(|_| "Cannot encode safe preview.".into())
+            ),
+            MutationScreen::History(history) => {
+                let selected = self
+                    .selected
+                    .min(history.operations.len().saturating_sub(1));
+                let mut text = String::from(
+                    "Operation history | arrows: select | u: preview undo | Esc: close\n",
+                );
+                for (i, op) in history.operations.iter().enumerate() {
+                    text.push_str(&format!(
+                        "{} {} | {} | {} files\n{}\n",
+                        if i == selected { ">" } else { " " },
+                        op.operation_id,
+                        op.status,
+                        op.changed_files,
+                        op.recovery
+                    ));
+                }
+                if history.operations.is_empty() {
+                    text.push_str("No operations.\n");
+                }
+                text
+            }
+            MutationScreen::Message(text) => format!("{text}\nEsc: close"),
+        };
+        frame.render_widget(
+            Paragraph::new(
+                text.split('\n')
+                    .map(crate::presentation::safe)
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .block(Block::bordered().title("Skillrail operations"))
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll, 0)),
+            frame.area(),
+        );
     }
 }

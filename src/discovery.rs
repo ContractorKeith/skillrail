@@ -161,12 +161,6 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
     if codex_config.is_err() {
         inventory.diagnostics.push(diagnostic("config_unknown", "Codex user configuration could not be safely interpreted; no raw parser or configuration data is retained."));
     }
-    let mut unsupported_config = false;
-    for parent in &ancestors {
-        if fs::symlink_metadata(parent.join(".codex/config.toml")).is_ok() {
-            unsupported_config = true;
-        }
-    }
     let mut seen = BTreeSet::new();
     for (agent, scope, root) in roots {
         // Home can equal project: the same location is not a second installation.
@@ -335,14 +329,14 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 }
             } else {
                 match &codex_config {
-                    Ok(rules) if !unsupported_config => {
+                    Ok(rules) => {
                         let mut enabled = None;
                         for rule in rules {
                             if rule.name.as_deref() == Some(&name) || rule.path.as_ref().is_some_and(|p| p == &original.join("SKILL.md") || canonical.as_ref().is_some_and(|c| p == &c.join("SKILL.md"))) { enabled = Some(rule.enabled); }
                         }
                         if enabled == Some(false) { reasons.push("User skills.config last matching rule disables this skill; unknown higher-priority runtime policy may override it.".into()); }
                     }
-                    _ => reasons.push("config_unknown: Codex configuration malformed, unsupported, inaccessible, or project trust/config unresolved.".into()),
+                    _ => reasons.push("config_unknown: Codex user skill configuration is malformed, unsupported or inaccessible; session overrides remain unresolved.".into()),
                 }
                 if metadata
                     .as_ref()
@@ -414,7 +408,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 diagnostics: problems,
                 origin: crate::mcp_inventory::Origin::Standalone,
                 mcp: None,
-                capability: crate::mcp_inventory::Capability::standalone_skill(),
+                capability: crate::mcp_inventory::Capability::standalone_skill(agent, scope),
                 observations: vec![],
             });
         }

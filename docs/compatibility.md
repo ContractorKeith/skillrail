@@ -66,18 +66,19 @@ therefore retain distinct identities while explaining personal precedence for
 
 ## Visibility and unsupported combinations
 
-Codex path selectors currently match the original or canonical SKILL.md path
-lexically. Alternate symlink spellings and paths containing `..` are not
-normalized; their native-agent semantics have not been verified. A missing
+The M1 visibility-reason matcher compares Codex path selectors to the original
+or canonical SKILL.md path lexically. Alternate spellings are not normalized in
+that older explanatory path. M4 observations and mutation selectors canonicalize
+paths using the pinned native source below. A missing
 disable observation is not evidence of enablement; visibility remains unknown.
 
 M1 reports configured visibility as `unknown` with concrete observations and
 reasons. It does not claim that any session loaded a skill. User-level Codex
 TOML is bounded and parsed to explain matching enable/disable rules. A matching
 user disable is an observation, not proof that no higher-priority setting can
-override it. Project Codex config makes rule interpretation uncertain because
-trust/config layering is unresolved. Unsupported or malformed selectors never
-become a positive visibility claim. Configuration values and parser failures
+override it. Pinned native source now establishes that project `skills.config`
+is ignored; only user/session layers supply these rules. Unsupported or malformed
+selectors never become a positive visibility claim. Configuration values and parser failures
 are never emitted or cached.
 
 Claude personal/project shadowing, invocation frontmatter, and presence of
@@ -383,3 +384,185 @@ Linux: waiting without draining output filled the PTY and prevented terminal
 restoration/exit. The smoke now drains while waiting under the original ten-second
 deadline, and a bounded backpressured-quit scenario verifies attributes and the
 alternate screen are restored. This changes the test driver, not TUI behavior.
+
+## M4 native toggle evidence and support
+
+M4 evidence checked 2026-11-02 on Linux x86_64, Rust 1.98.1 / Git 2.56.0.
+The installed Claude executable now reports **2.1.316 (Claude Code)**; the
+older M2 **2.1.309** inventory evidence above remains historical evidence.
+M4 pins the inspected 2.1.316 native Linux executable SHA-256:
+`fd13c70000fec3f2116dfbcbb6121210b4a29328bf0e46210a59dd594a67d824`.
+No model session, real config, authentication or credential store was read.
+Only `--version` and executable-code inspection were used for this evidence.
+
+`python3 scripts/toggle-evidence.py --claude-binary /absolute/native/claude`
+checks that exact version/hash and native embedded setting definitions and
+toggle logic, then fetches two exact Codex source files at the pinned commit.
+It requires that specific Linux binary, rustc and network access to raw.githubusercontent.com;
+an unavailable/different prerequisite fails explicitly. It is an evidence probe,
+not part of offline acceptance and not a native session-loading test. The layer
+probe compiles the exact pinned `skill_config_rules_from_stack` function with
+small typed fixture collaborators: user/session rules participate, project/system
+rules do not, and session overrides user. Removing the source's filter is a
+negative control that must fail. This exercises the filter rather than merely
+looking for selector strings.
+The probe passed locally with:
+
+| Source | SHA-256 |
+|---|---|
+| Codex `config/src/skills_config.rs` | `df7e8bcd53b9aef6309a930a25203bfb052345b71091b4e2000e200dedeb2d6b` |
+| Codex `config/src/mcp_types.rs` | `af5fb824c092cd74e3a42297979a4d250c332008f5409e14890253728747e71a` |
+
+The [official Claude skill visibility settings](https://code.claude.com/docs/en/skills#override-skill-visibility-from-settings)
+document `skillOverrides` values `on`, `name-only`, `user-invocable-only`, `off`,
+with absent = on, and explicitly exclude plugin skills. The pinned binary's
+embedded settings schema declares the same four states. Its toggle code writes
+`disabledMcpServers` with membership `!enabled`, corroborating the
+[official per-project MCP toggle](https://code.claude.com/docs/en/mcp#disable-a-server-without-removing-it)
+in `.claude.json`. This list is distinct from project-MCP approval/rejection lists.
+These mechanisms change native configuration without changing externally owned
+skill contents or MCP definitions.
+
+Codex evidence remains tag **rust-v0.166.0**, commit
+**6ff1e1ca3b30fc8b914720681fcf5fe62e95f856**:
+
+- [skills_config.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/config/src/skills_config.rs)
+  defines path/name plus boolean `enabled`, canonicalizes path selectors, consumes
+  only User and SessionFlags layers (explicit filter in the rule resolver),
+  deduplicates identical selectors and applies later matching rules last.
+  Project rules are ignored even when trusted. Skillrail writes canonical
+  absolute document paths only for supported user-scoped toggles and leaves
+  broad name rules untouched. Project-scoped toggles refuse unchanged.
+- [mcp_types.rs](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/config/src/mcp_types.rs)
+  defines `McpServerConfig.enabled:bool`, default true. Skillrail patches this
+  field in the selected standalone definition, never a guessed `disabled` field.
+- The [official config reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+  corroborates path-based `skills.config` enablement and per-server enablement.
+
+| Target | Native mechanism / write location | Supported limit |
+|---|---|---|
+| Claude standalone user skill | name → on/off in `<home>/.claude/settings.json` | Refuse another Claude occurrence with the same native name |
+| Claude standalone project skill | name → on/off in selected `.claude/settings.json` | Selected-project override; ancestor source content remains untouched |
+| Codex standalone user skill | canonical SKILL.md path + enabled in user `skills.config` | Refuse another Codex occurrence addressing that same canonical source |
+| Codex standalone project skill | none | Native resolver ignores project skill rules; refuse without user-wide fallback |
+| Claude standalone user/project/local MCP definition | selected project's `.claude.json` `disabledMcpServers` | Per-project effect even for user definitions; no same-name competing occurrence or reserved name |
+| Codex standalone user/project MCP definition | exact definition's TOML `mcp_servers.<name>.enabled` | Refuse competing same-name occurrence/layer or uncertain definition schema |
+| Plugin skills/MCP or unknown scope | none | Refuse unchanged; use native lifecycle |
+
+Cross-agent skill aliases can be toggled safely with these native mechanisms:
+only the selected agent's supported config changes. Claude project enable
+accounts for known inherited user/ancestor off/name-only/user-invocable-only
+states by writing explicit on; known restrictive local overrides refuse. Same-agent
+aliases/collisions that a native selector would affect together refuse; Skillrail does not move a shared
+source or silently widen the requested scope. Native profile, CLI, managed-policy,
+trust and session precedence remain explicit uncertainty. Known local skill
+settings now appear as `skill_enabled` observations with their exact source
+path/scope; ignored Codex project skill rules do not become enablement
+observations. Visibility itself remains unknown. The earlier lexical-only M1
+explanation remains conservative, while M4 observations and writes use the pinned
+canonical selector evidence.
+
+JSON editing preserves untouched spans; TOML uses locked **toml_edit 0.25.17**
+for comment/layout-preserving edits, including arrays of tables and inline rule
+arrays. Existing keys and credentials stay in their files. `serde_json`'s borrowed
+`RawValue` feature locates JSON value spans after the existing duplicate-key
+check. **libc 0.2.191** supplies descriptor-relative guarded operations and native
+exclusive-rename flags. These additions avoid guessed config serialization and
+check-then-follow filesystem writes. Extended ACL-bearing mutation paths refuse
+rather than dropping ACLs. Darwin ACL declarations follow Apple's
+[sys/acl.h](https://github.com/apple-oss-distributions/Libc/blob/main/include/sys/acl.h)
+and [entry implementation](https://github.com/apple-oss-distributions/Libc/blob/main/posix1e/acl_entry.c);
+Linux checks POSIX access/default ACL xattrs through the open descriptor.
+
+### Journal isolation and bounded guarantees
+
+Issue #5's cache hard-link carry-forward is implemented separately: the durable
+journal does **not** inherit the cache's trusted-directory-only assumption.
+Every opened recovery file is checked for owner, mode 0600, regular type and link
+count one. The recovery directory and config staging directories require 0700;
+all parents are opened component by component without following links, and
+owner/mode/ACL and descriptor identities are checked. Existing config files may
+retain read permissions but cannot be group/other-writable or hard-linked.
+Original config bytes are only in private recovery records/staging; history and
+MCP never expose them. Cache hard-link limitations documented earlier still
+apply to SQLite; deleting that cache leaves operations/undo intact.
+
+The journal records intent and original bytes before staging/publishing and saves
+the stage identity before every publish. Both file and containing directories are
+synced. Private stage directories are siblings of the destination, so renames stay
+on its filesystem. Multi-file work is recoverable, not atomically visible as a set.
+History reports prepared/applied/undoing/undone with an explicit undo recovery
+path. Private schema 2 stores originals/proposals once and references them from
+stage/undo metadata; schema-1 recovery records remain readable. Admission sizes
+the exact worst-case complete lifecycle against the unchanged 4 MiB limit,
+including all files, future maximum-width metadata and complete undo progress.
+It refuses before journal/config mutation when that reservation does not fit.
+Undo retains its plan and reuses exact durable stages across repeated crashes;
+conflicting user edits refuse unchanged. Unknown record versions fail closed.
+Strict inode preconditions intentionally prevent composing historical undos:
+A(disable), B(enable), undo B succeeds, but undo A refuses the replacement inode
+even when its bytes equal A's postcondition. No identity handoff/force cascade
+is introduced. Uniform CRLF TOML edits retain line endings with value equivalence
+checked after conversion; mixed styles refuse without touching config bytes.
+
+Linux uses `renameat2(RENAME_NOREPLACE)`, macOS uses
+`renameatx_np(RENAME_EXCL)` when the destination was absent; unsupported filesystem
+support refuses rather than reverting to an overwriting rename. Existing-file
+replacement has no portable expected-inode compare-and-swap. An external process
+can still race after the final check; descriptor anchoring prevents following its
+symlink target, postchecks expose observed changes, and recovery content remains.
+The same-user/root process model, concurrent ACL/permission changes, filesystem
+and storage durability limits are stated in the [CLI contract](CLI.md#durable-journal-history-and-recovery).
+No protection against hostile same-UID/root access is claimed.
+
+### M4 verification and pending prerequisites
+
+The shared acceptance gate retains all 70 M0–M3 tests and the SDK cancellation
+regressions/bounded adapter. M4 adds public CLI/application tests for exact previews,
+wrong targets, safe shared-source toggles and plugin/collision refusals, byte and
+credential preservation, history and conflict undo, repeated operations, no-op
+revalidation, cross-process locks, deterministic inherited-lock reproduction,
+symlink/hard-link/parent/stage substitutions, ACL/private modes, exclusive create,
+interrupted multi-file apply and repeated interrupted undo, cache rebuild and a
+real SDK client against the journal-bearing state. Linux ACL fixtures require
+POSIX ACL xattrs. Fault injection is a typed application callback, never an unsafe
+production environment flag. PTY checks drain output while waiting and cover
+occurrence choice, preview, cancel, confirm, history, undo preview/cancel/apply,
+credential canaries and terminal restoration.
+
+Local evidence is Linux only. macOS compilation/execution, Darwin ACL behavior,
+exclusive-rename/filesystem support and disposable native session-loading checks
+remain explicit integration/release prerequisites; no native loading claim is
+made from source inspection or fixtures. No prerequisites are silently skipped
+by `scripts/accept.sh`; the optional pinned-source probe is reported separately.
+Independent full-diff and adversarial review remain the parent's gate before ready
+or merge. Install/update/uninstall remain M5/M6, with no MCP writes added here.
+
+The first M4 macOS CI compile at b2f61e9 found E0617: Darwin's 16-bit `mode_t`
+cannot be passed directly as a C variadic argument to `openat`. The follow-up
+uses the promoted `c_uint` argument on both platforms. Linux acceptance was
+rerun after this fix; macOS rerun results remain an integration check.
+
+### M4 round-2 corrections and local evidence
+
+The parent-reviewed `3802a76` PTY isolation fix is retained. Linux acceptance after
+round 2 passes **110 tests** (the original 70 plus 40 M4), strict Clippy/fmt,
+CLI/cache, SDK/MCP cancellation/limits and real PTY smokes. macOS acceptance
+for this new head remains CI evidence, distinct from the parent's green
+Linux/macOS baseline at `3802a76`. The strengthened native-source probe passed
+with its removed-layer-filter negative control. No native session loading was
+inferred.
+
+Failing-first regressions reproduced the unsupported Codex project write,
+source-retarget token reuse, inherited Claude off/no-op, accepted 200 KB settings
+that exceeded the old undo budget, recorded-stage inode replacement during real
+process interruption, and CRLF normalization. Tests now cover native user positive
+controls, project no-write refusal, stable/source-bound tokens, inherited
+on/off/name-only/user-invocable-only and local override refusal, single/batch
+capacity boundaries (500 KB/250 KB per-file positive controls and larger early
+refusals), schema-1 recovery, and interrupted/repeated undo. Linux's process test
+uses a fixture-scoped fsync interposer and real exit 77/78 interruptions; its fresh
+stage control proves the interposer fires, while recorded stages survive retries.
+The Linux test requires the existing C compiler prerequisite; portable stage
+recovery tests remain active on macOS. Sequential historical undo remains
+conservative, with explicit byte-preservation/conflict coverage.

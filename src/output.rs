@@ -30,6 +30,7 @@ pub fn finish(result: Result<(), AppError>, json: bool) -> std::process::ExitCod
             std::process::ExitCode::from(match error.code {
                 "invalid_arguments" => 2,
                 "item_not_found" => 3,
+                "mutation_refused" | "mutation_conflict" => 4,
                 _ => 1,
             })
         }
