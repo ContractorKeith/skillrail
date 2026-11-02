@@ -1,7 +1,6 @@
 //! Isolated Git acquisition and object reads; no checkout or source configuration.
 use super::*;
 use std::{
-    collections::BTreeMap,
     io::Read,
     process::{Command, Stdio},
 };
@@ -68,7 +67,7 @@ fn git(repo: &Path, args: &[&str], limit: u64) -> Result<Vec<u8>, AppError> {
 }
 pub(super) fn collect(
     r: &InstallRequest,
-) -> Result<(Vec<Entry>, String, Option<String>), AppError> {
+) -> Result<(Vec<Entry>, String, Option<String>, String), AppError> {
     let temp = tempfile::Builder::new()
         .prefix("s5g-")
         .tempdir()
@@ -140,58 +139,122 @@ pub(super) fn collect(
     if rev.len() != 40 || !rev.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(unsafe_source());
     }
-    let listing = git(&repo, &["ls-tree", "-rtz", "--full-tree", &rev], 256 * 1024)?;
-    let mut entries = vec![];
-    let mut budget = 512 * 1024usize;
-    let mut folded = BTreeMap::new();
-    for line in listing.split(|b| *b == 0).filter(|b| !b.is_empty()) {
-        let line = std::str::from_utf8(line).map_err(|_| unsafe_source())?;
-        let (meta, path) = line.split_once('\t').ok_or_else(unsafe_source)?;
-        let parts: Vec<_> = meta.split(' ').collect();
-        if parts.len() != 3
-            || !["100644", "100755", "040000"].contains(&parts[0])
-            || !["blob", "tree"].contains(&parts[1])
-            || !relative(path)
-            || path.split('/').any(|s| {
-                [".git", ".skillrail", ".claude-plugin", ".gitmodules"]
-                    .contains(&s.to_ascii_lowercase().as_str())
-            })
-        {
-            return Err(unsafe_source());
-        }
-        // Every path prefix has one ASCII spelling on case-insensitive filesystems.
-        let mut prefix = String::new();
-        for s in path.split('/') {
-            if !prefix.is_empty() {
-                prefix.push('/');
+    let mut remaining = 10_000usize;
+    let selected = match &r.skill {
+        Some(path) => path.clone(),
+        None => {
+            let mut candidates = vec![];
+            for entry in listed(&repo, &rev, "-rz", &mut remaining)? {
+                let candidate = if entry.path == b"SKILL.md" {
+                    Some(b".".as_slice())
+                } else {
+                    entry.path.strip_suffix(b"/SKILL.md")
+                };
+                if let Some(path) = candidate {
+                    candidates.push(path.to_vec());
+                    if candidates.len() > 1 {
+                        return Err(unsafe_source());
+                    }
+                }
             }
-            prefix.push_str(s);
-            if folded
-                .insert(prefix.to_ascii_lowercase(), prefix.clone())
-                .is_some_and(|v| v != prefix)
+            if candidates.len() != 1 {
+                return Err(unsafe_source());
+            }
+            String::from_utf8(candidates.pop().ok_or_else(unsafe_source)?)
+                .map_err(|_| unsafe_source())?
+        }
+    };
+    if !relative(&selected) {
+        return Err(unsafe_source());
+    }
+    // Resolve one exact tree component at a time. Never follow a Git symlink or
+    // silently pick one of duplicate/case-aliased selected ancestors.
+    let mut tree = rev.clone();
+    if selected != "." {
+        for component in selected.split('/') {
+            let level = listed(&repo, &tree, "-z", &mut remaining)?;
+            let matches: Vec<_> = level
+                .iter()
+                .filter(|e| e.path.eq_ignore_ascii_case(component.as_bytes()))
+                .collect();
+            if matches.len() != 1
+                || matches[0].path != component.as_bytes()
+                || matches[0].mode != "040000"
+                || matches[0].kind != "tree"
             {
                 return Err(unsafe_source());
             }
-        }
-        let directory = parts[0] == "040000";
-        let bytes = if directory {
-            vec![]
-        } else {
-            git(&repo, &["cat-file", "blob", parts[2]], budget as u64)?
-        };
-        budget = budget.checked_sub(bytes.len()).ok_or_else(unsafe_source)?;
-        entries.push(Entry {
-            path: path.into(),
-            bytes,
-            executable: parts[0] == "100755",
-            directory,
-        });
-        if entries.len() > 1000 {
-            return Err(unsafe_source());
+            tree = matches[0].object.clone();
         }
     }
+    let listing = listed(&repo, &tree, "-rtz", &mut 1000)?;
+    let mut entries = vec![];
+    let mut blobs = vec![];
+    for entry in listing {
+        let directory = match (entry.mode.as_str(), entry.kind.as_str()) {
+            ("040000", "tree") => true,
+            ("100644" | "100755", "blob") => false,
+            _ => return Err(unsafe_source()),
+        };
+        let path = String::from_utf8(entry.path).map_err(|_| unsafe_source())?;
+        entries.push(Entry {
+            path,
+            bytes: vec![],
+            directory,
+            executable: entry.mode == "100755",
+        });
+        blobs.push((entries.len() - 1, entry.object));
+    }
+    // Shape validation precedes any selected blob read and journal admission.
+    validate_entries(&entries)?;
+    let mut budget = 512 * 1024usize;
+    for (index, object) in blobs {
+        if entries[index].directory {
+            continue;
+        }
+        let bytes = git(&repo, &["cat-file", "blob", &object], budget as u64)?;
+        budget = budget.checked_sub(bytes.len()).ok_or_else(unsafe_source)?;
+        entries[index].bytes = bytes;
+    }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok((entries, origin, Some(rev)))
+    Ok((entries, origin, Some(rev), selected))
+}
+struct TreeEntry {
+    mode: String,
+    kind: String,
+    object: String,
+    path: Vec<u8>,
+}
+fn listed(
+    repo: &Path,
+    tree: &str,
+    flags: &str,
+    remaining: &mut usize,
+) -> Result<Vec<TreeEntry>, AppError> {
+    let listing = git(repo, &["ls-tree", flags, "--full-tree", tree], 1024 * 1024)?;
+    let mut entries = vec![];
+    for record in listing.split(|b| *b == 0).filter(|b| !b.is_empty()) {
+        *remaining = remaining.checked_sub(1).ok_or_else(unsafe_source)?;
+        let tab = record
+            .iter()
+            .position(|b| *b == b'\t')
+            .ok_or_else(unsafe_source)?;
+        let meta = std::str::from_utf8(&record[..tab]).map_err(|_| unsafe_source())?;
+        let parts: Vec<_> = meta.split(' ').collect();
+        if parts.len() != 3
+            || parts[2].len() != 40
+            || !parts[2].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(unsafe_source());
+        }
+        entries.push(TreeEntry {
+            mode: parts[0].into(),
+            kind: parts[1].into(),
+            object: parts[2].into(),
+            path: record[tab + 1..].to_vec(),
+        });
+    }
+    Ok(entries)
 }
 fn copy_git_metadata(source: &Path, dest: &Path) -> Result<(), AppError> {
     fn copy(

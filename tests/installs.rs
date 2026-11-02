@@ -951,3 +951,470 @@ fn git_ref_advancing_since_preview_refuses_before_admission() {
     assert_eq!(a.apply(&p).unwrap_err().code, "mutation_conflict");
     assert!(!f.path("state/journal").exists());
 }
+
+#[test]
+fn explicit_and_sole_skill_selection_ignores_unrelated_content_for_local_and_git() {
+    for is_git in [false, true] {
+        for explicit in [false, true] {
+            let f = Fixture::new();
+            fs::create_dir(f.path("source/chosen")).unwrap();
+            fs::rename(f.path("source/SKILL.md"), f.path("source/chosen/SKILL.md")).unwrap();
+            fs::write(f.path("source/unrelated-large"), vec![b'x'; 530_000]).unwrap();
+            fs::write(f.path("source/é"), "unrelated Unicode asset").unwrap();
+            std::os::unix::fs::symlink("unrelated-large", f.path("source/unrelated-link")).unwrap();
+            fs::create_dir(f.path("source/.claude-plugin")).unwrap();
+            fs::write(f.path("source/.claude-plugin/plugin.json"), "{}").unwrap();
+            if is_git {
+                git(&f, &["init", "--template="]);
+                git(&f, &["add", "."]);
+                git(
+                    &f,
+                    &[
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.test",
+                        "commit",
+                        "-m",
+                        "selection",
+                    ],
+                );
+            }
+            let a = app(&f);
+            let mut r = request(&f);
+            r.git = is_git;
+            if explicit {
+                r.skill = Some("chosen".into());
+            }
+            let p = a
+                .plan_install(r)
+                .unwrap_or_else(|e| panic!("git={is_git} explicit={explicit}: {e}"));
+            let op = a.apply(&p).unwrap().operation_id;
+            assert_eq!(fs::read_dir(&p.view().files[0]).unwrap().count(), 2);
+            a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+        }
+    }
+}
+#[test]
+fn selected_subtree_still_refuses_unsafe_content_and_ancestor_links() {
+    for is_git in [false, true] {
+        for kind in ["large", "unicode", "link", "plugin", "ancestor"] {
+            let f = Fixture::new();
+            fs::create_dir(f.path("source/chosen")).unwrap();
+            fs::rename(f.path("source/SKILL.md"), f.path("source/chosen/SKILL.md")).unwrap();
+            match kind {
+                "large" => fs::write(f.path("source/chosen/large"), vec![0u8; 530_000]).unwrap(),
+                "unicode" => fs::write(f.path("source/chosen/é"), "unsupported").unwrap(),
+                "link" => {
+                    std::os::unix::fs::symlink("SKILL.md", f.path("source/chosen/link")).unwrap()
+                }
+                "plugin" => fs::create_dir(f.path("source/chosen/.claude-plugin")).unwrap(),
+                _ => std::os::unix::fs::symlink("chosen", f.path("source/alias")).unwrap(),
+            }
+            if is_git {
+                if kind == "plugin" {
+                    fs::write(f.path("source/chosen/.claude-plugin/plugin.json"), "{}").unwrap();
+                }
+                git(&f, &["init", "--template="]);
+                git(&f, &["add", "."]);
+                git(
+                    &f,
+                    &[
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.test",
+                        "commit",
+                        "-m",
+                        "unsafe",
+                    ],
+                );
+            }
+            let a = app(&f);
+            let mut r = request(&f);
+            r.git = is_git;
+            r.skill = Some(
+                if kind == "ancestor" {
+                    "alias"
+                } else {
+                    "chosen"
+                }
+                .into(),
+            );
+            assert!(a.plan_install(r).is_err(), "git={is_git} {kind}");
+            assert!(!f.path("state/journal").exists());
+            assert!(!f.path("home/.skillrail-sources").exists());
+        }
+    }
+}
+fn git_input(f: &Fixture, args: &[&str], input: &[u8]) -> String {
+    use std::io::Write;
+    let mut c = Command::new("git")
+        .arg("-C")
+        .arg(f.path("source"))
+        .args([
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+        ])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    c.stdin.take().unwrap().write_all(input).unwrap();
+    let o = c.wait_with_output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().into()
+}
+#[test]
+fn malformed_selected_git_trees_refuse_before_journal_and_leave_valid_install_usable() {
+    for kind in ["dot", "dotdot", "duplicate", "prefix", "case"] {
+        let f = Fixture::new();
+        git(&f, &["init", "--template="]);
+        git(&f, &["add", "."]);
+        git(
+            &f,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        );
+        let blob = git(&f, &["rev-parse", "HEAD:SKILL.md"]);
+        let extra = match kind {
+            "dot" => format!("100644 blob {blob}\t.\n"),
+            "dotdot" => format!("100644 blob {blob}\t..\n"),
+            "duplicate" => format!("100644 blob {blob}\tasset\n100644 blob {blob}\tasset\n"),
+            "prefix" => {
+                let tree = git_input(
+                    &f,
+                    &["mktree"],
+                    format!("100644 blob {blob}\tchild\n").as_bytes(),
+                );
+                format!("100644 blob {blob}\tasset\n040000 tree {tree}\tasset\n")
+            }
+            _ => format!("100644 blob {blob}\tasset\n100644 blob {blob}\tASSET\n"),
+        };
+        let tree = git_input(
+            &f,
+            &["mktree"],
+            format!("{extra}100644 blob {blob}\tSKILL.md\n").as_bytes(),
+        );
+        let rev = git_input(&f, &["commit-tree", &tree, "-m", "malformed"], b"");
+        let a = app(&f);
+        let mut r = request(&f);
+        r.git = true;
+        r.revision = Some(rev);
+        assert!(
+            a.plan_install(r).is_err(),
+            "malformed {kind} produced a preview"
+        );
+        assert!(!f.path("state/journal").exists());
+        assert!(!f.path("home/.skillrail-sources").exists());
+        assert!(a.operations().unwrap().operations.is_empty());
+        let p = a.plan_install(request(&f)).unwrap();
+        a.apply(&p).unwrap();
+    }
+}
+#[test]
+fn selected_agent_metadata_enforces_codex_name_limit_and_native_field_types() {
+    for agents in [vec!["codex"], vec!["claude", "codex"]] {
+        for length in [64, 65] {
+            let f = Fixture::new();
+            fs::write(
+                f.path("source/SKILL.md"),
+                format!(
+                    "---\nname: {}\ndescription: fixture\n---\n",
+                    "n".repeat(length)
+                ),
+            )
+            .unwrap();
+            let a = app(&f);
+            let mut r = request(&f);
+            r.agents = agents.iter().map(|s| s.to_string()).collect();
+            let p = a.plan_install(r);
+            assert_eq!(p.is_ok(), length == 64, "{agents:?} length {length}");
+            assert!(!f.path("state/journal").exists());
+            assert!(!f.path("home/.skillrail-sources").exists());
+        }
+    }
+    for fields in [
+        "description: '   '",
+        "description: fixture\nmetadata: 42",
+        "description: fixture\nmetadata:\n  short-description: [42]",
+    ] {
+        let f = Fixture::new();
+        fs::write(
+            f.path("source/SKILL.md"),
+            format!("---\nname: demo\n{fields}\n---\n"),
+        )
+        .unwrap();
+        let a = app(&f);
+        let mut r = request(&f);
+        r.agents = vec!["codex".into()];
+        assert!(a.plan_install(r).is_err(), "{fields}");
+        assert!(!f.path("state/journal").exists());
+    }
+}
+#[test]
+fn adapter_reservations_apply_only_to_selected_agents_and_exact_namespace() {
+    for name in [
+        "synced",
+        "SyNcEd",
+        "anthropic-skills",
+        "anthropic-skills-helper",
+    ] {
+        for agents in [vec!["codex"], vec!["claude"], vec!["claude", "codex"]] {
+            let f = Fixture::new();
+            fs::write(
+                f.path("source/SKILL.md"),
+                format!("---\nname: {name}\ndescription: fixture\n---\n"),
+            )
+            .unwrap();
+            let a = app(&f);
+            let mut r = request(&f);
+            r.agents = agents.iter().map(|s| s.to_string()).collect();
+            let allowed = !agents.contains(&"claude") || name == "anthropic-skills-helper";
+            let p = a.plan_install(r);
+            assert_eq!(p.is_ok(), allowed, "{agents:?} {name}");
+            if let Ok(p) = p {
+                let op = a.apply(&p).unwrap().operation_id;
+                a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+            } else {
+                assert!(!f.path("state/journal").exists());
+                assert!(!f.path("home/.skillrail-sources").exists());
+            }
+        }
+    }
+}
+#[test]
+fn incomplete_consumer_roots_refuse_undo_and_preserve_snapshot_and_aliases() {
+    for kind in ["budget", "malformed", "permission"] {
+        let f = Fixture::new();
+        let a = app(&f);
+        let mut r = request(&f);
+        r.agents = vec!["codex".into()];
+        let p = a.plan_install(r).unwrap();
+        let op = a.apply(&p).unwrap().operation_id;
+        let snapshot = &p.view().files[0];
+        let root = f.path("home/.claude/skills");
+        fs::create_dir_all(&root).unwrap();
+        if kind == "budget" {
+            for n in 0..10001 {
+                fs::write(root.join(format!("filler{n:05}")), b"").unwrap();
+            }
+            std::os::unix::fs::symlink(snapshot, root.join("zz-alias")).unwrap();
+        } else if kind == "malformed" {
+            fs::remove_dir(&root).unwrap();
+            fs::write(&root, b"not a directory").unwrap();
+        } else {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        assert!(
+            a.plan_undo(&op).is_err(),
+            "{kind} authorized undo from incomplete scan"
+        );
+        assert!(snapshot.exists());
+        assert!(f.path("home/.agents/skills/demo").exists());
+        if kind == "permission" {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+}
+#[test]
+fn incomplete_native_and_case_collision_checks_refuse_before_admission() {
+    for kind in ["case", "native", "malformed"] {
+        let f = Fixture::new();
+        let root = f.path("home/.agents/skills");
+        fs::create_dir_all(&root).unwrap();
+        if kind == "malformed" {
+            fs::remove_dir(&root).unwrap();
+            fs::write(&root, b"malformed root").unwrap();
+        } else {
+            for n in 0..10001 {
+                fs::write(root.join(format!("filler{n:05}")), b"").unwrap();
+            }
+            if kind == "case" {
+                fs::create_dir(root.join("DEMO")).unwrap();
+            } else {
+                fs::create_dir(root.join("zz-existing")).unwrap();
+                fs::copy(f.path("source/SKILL.md"), root.join("zz-existing/SKILL.md")).unwrap();
+            }
+        }
+        let a = app(&f);
+        assert!(
+            a.plan_install(request(&f)).is_err(),
+            "{kind} authorized incomplete collision check"
+        );
+        assert!(!f.path("state/journal").exists());
+        assert!(!f.path("home/.skillrail-sources").exists());
+    }
+}
+#[test]
+fn last_publication_rechecks_case_alias_and_native_name_collisions() {
+    use skillrail::mutation::Checkpoint as C;
+    for kind in ["case", "native"] {
+        let f = Fixture::new();
+        let a = app(&f);
+        let mut r = request(&f);
+        r.agents = vec!["codex".into()];
+        let p = a.plan_install(r).unwrap();
+        let root = f.path("home/.agents/skills");
+        let result = a.apply_with_checkpoint(&p, |point| {
+            if point == C::BeforePublish(1) {
+                if kind == "case" {
+                    fs::create_dir(root.join("DEMO")).unwrap();
+                } else {
+                    fs::create_dir(root.join("alias")).unwrap();
+                    fs::copy(f.path("source/SKILL.md"), root.join("alias/SKILL.md")).unwrap();
+                }
+            }
+            Ok(())
+        });
+        assert!(result.is_err(), "late {kind} collision was accepted");
+        assert!(!root.join("demo").exists());
+        assert!(
+            root.join(if kind == "case" { "DEMO" } else { "alias" })
+                .exists()
+        );
+    }
+}
+#[test]
+fn explicit_git_selection_ignores_malformed_unrelated_tree_but_refuses_ambiguous_ancestors() {
+    for duplicate_ancestor in [false, true] {
+        let f = Fixture::new();
+        git(&f, &["init", "--template="]);
+        git(&f, &["add", "."]);
+        git(
+            &f,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        );
+        let blob = git(&f, &["rev-parse", "HEAD:SKILL.md"]);
+        let chosen = git_input(
+            &f,
+            &["mktree"],
+            format!("100644 blob {blob}\tSKILL.md\n").as_bytes(),
+        );
+        let bad = git_input(
+            &f,
+            &["mktree"],
+            format!("100644 blob {blob}\t.\n").as_bytes(),
+        );
+        let extra = if duplicate_ancestor {
+            format!("040000 tree {chosen}\tchosen\n")
+        } else {
+            format!("040000 tree {bad}\tunrelated\n")
+        };
+        let root = git_input(
+            &f,
+            &["mktree"],
+            format!("{extra}040000 tree {chosen}\tchosen\n").as_bytes(),
+        );
+        let rev = git_input(&f, &["commit-tree", &root, "-m", "subtree"], b"");
+        let a = app(&f);
+        let mut r = request(&f);
+        r.git = true;
+        r.revision = Some(rev);
+        r.skill = Some("chosen".into());
+        let p = a.plan_install(r);
+        assert_eq!(p.is_ok(), !duplicate_ancestor);
+        if let Ok(p) = p {
+            let op = a.apply(&p).unwrap().operation_id;
+            a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+        } else {
+            assert!(!f.path("state/journal").exists());
+        }
+    }
+}
+#[test]
+fn relevant_scan_failures_block_selected_agent_checks_without_global_coverage_refusal() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.path("home/.claude")).unwrap();
+    fs::write(
+        f.path("home/.claude/skills"),
+        b"malformed unrelated agent root",
+    )
+    .unwrap();
+    let a = app(&f);
+    let mut r = request(&f);
+    r.agents = vec!["codex".into()];
+    let p = a.plan_install(r).unwrap();
+    let op = a.apply(&p).unwrap().operation_id;
+    assert!(a.plan_undo(&op).is_err());
+    fs::remove_file(f.path("home/.claude/skills")).unwrap();
+    a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+    assert!(
+        a.scan()
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "coverage_partial")
+    );
+}
+#[test]
+fn incomplete_external_skill_fingerprint_cannot_hide_snapshot_file_consumer() {
+    let f = Fixture::new();
+    let a = app(&f);
+    let mut r = request(&f);
+    r.agents = vec!["codex".into()];
+    let p = a.plan_install(r).unwrap();
+    let op = a.apply(&p).unwrap().operation_id;
+    let outside = f.path("home/.claude/skills/external");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(
+        outside.join("SKILL.md"),
+        "---\nname: external\ndescription: external\n---\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        p.view().files[0].join("SKILL.md"),
+        outside.join("reference"),
+    )
+    .unwrap();
+    assert!(a.plan_undo(&op).is_err());
+    assert!(p.view().files[0].exists());
+    assert!(outside.join("reference").exists());
+}
+#[test]
+fn destination_capacity_reserves_staging_without_stranding_recovery() {
+    for entries in [9998, 9999] {
+        let f = Fixture::new();
+        let root = f.path("home/.agents/skills");
+        fs::create_dir_all(&root).unwrap();
+        for n in 0..entries {
+            fs::write(root.join(format!("filler{n:05}")), b"").unwrap();
+        }
+        let a = app(&f);
+        let mut r = request(&f);
+        r.agents = vec!["codex".into()];
+        let result = a.plan_install(r);
+        if entries == 9998 {
+            let p = result.unwrap();
+            let op = a.apply(&p).unwrap().operation_id;
+            a.apply(&a.plan_undo(&op).unwrap()).unwrap();
+            assert!(!root.join("demo").exists());
+        } else {
+            assert!(result.is_err());
+            assert!(!f.path("state/journal").exists());
+        }
+    }
+}

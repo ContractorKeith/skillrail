@@ -566,13 +566,25 @@ Ordinary source permissions normalize to owner-only 0600/0700, retaining whether
 a file is executable. Snapshot directories are 0700. Source scripts never run.
 Later edits to the source do not change the installed snapshot.
 
-The accepted source has at most 1000 entries, depth 32, 512 KiB aggregate file
+The selected skill tree has at most 1000 entries, depth 32, 512 KiB aggregate file
 bytes, 64 KiB SKILL.md, ASCII path segments up to 128 bytes, and a contained
-subpath up to 1024 bytes. Both name and description are required. The entire
-source tree is checked before selection. All source symlinks (including internal
-links), hard-linked files, special files, unsafe owners/permissions/ACLs,
-case collisions, Unicode paths, `.skillrail`, plugin manifests and submodule
-metadata refuse. These conservative limits avoid unverified APFS normalization
+subpath up to 1024 bytes. Both name and nonblank description are required. Every selected adapter is
+validated before preview: Codex names have a 64-character maximum, including
+dual-agent installs; its optional metadata must have the supported native shape.
+The application retains its conservative ASCII name subset and 4096-byte
+description budget. Claude alone reserves the case-insensitive `synced` folder
+and exact `anthropic-skills` namespace; benign `anthropic-skills-helper` is allowed.
+Codex-only installs may use these Claude-reserved names. Colon names remain
+outside the application grammar for either adapter. Selection precedes content reads and validation. Explicit `--skill` resolves
+only its exact directory/tree and guarded ancestors; unrelated large files,
+Unicode paths, links and plugin layouts outside that subtree do not invalidate
+it. Without selection, a separate bounded candidate walk/listing (10000 entries,
+local depth 32, Git listing 1 MiB) finds SKILL.md paths without reading unrelated
+file/blob bodies; ambiguity requires explicit selection. Git selected ancestors
+must identify one exact tree, with no duplicate/case-aliased component or symlink.
+All selected-tree symlinks (including internal links), hard-linked files, special
+files, unsafe owners/permissions/ACLs, case collisions, Unicode paths, `.skillrail`,
+plugin manifests and submodule metadata refuse. These conservative limits avoid unverified APFS normalization
 and link semantics. `.gitattributes` is copied as inert data; filters are not run.
 
 Anonymous HTTPS additionally requires that the OS account home has neither
@@ -612,6 +624,9 @@ Install operations use private journal schema 3 under the existing lock; toggle
 records keep schema 2 and schema-1/2 recovery remains readable. Schema 3 stores
 source content once, with inode evidence separately. Admission serializes the
 worst future metadata/parent chains against the same 4 MiB lifecycle budget.
+Selected tree structure rejects dot/parent paths, duplicate entries, incompatible
+mode/type pairs, file/directory prefixes and case aliases before preview. The
+generated record is validated both at admission and before journal saves.
 Intent is synced before parent/stage creation; a private stage tree is recorded
 before writing files, complete file identities before exclusive tree publication,
 and link identity before each exclusive link publication. The snapshot publishes
@@ -623,7 +638,13 @@ across interruptions and repeated undo. Newly created empty store/agent parents
 are retained; undo removes only the owned tree and its stages/links.
 
 Undo also refuses extra discovered consumers of the snapshot in the selected
-home/project inventory. It cannot enumerate arbitrary filesystem references or
+home/project inventory. It requires complete, identity-bound scans of supported
+Claude/Codex roots and relevant plugin/fallback sources; permission failures,
+malformed roots, unknown candidates and enumeration/loading limits refuse.
+Generic `coverage_partial` for known unsupported coverage is not itself a failure.
+Install name checks require the same evidence for selected agents only.
+Destination enumeration detects overflow explicitly and reserves capacity for its
+stage/link. Case/native-name checks repeat immediately before publication. It cannot enumerate arbitrary filesystem references or
 unrelated project contexts; do not create external consumers while an install
 operation is being undone. The existing same-user/root, final-check race,
 filesystem/exclusive-rename and fsync limitations apply to tree/link operations.

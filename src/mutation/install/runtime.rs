@@ -80,6 +80,7 @@ pub(crate) fn apply(
             }
             checkpoint(Checkpoint::Published(n + 1))?;
         }
+        validate_consumers(app, i)?;
         for path in [&i.manifest.snapshot, &i.store.path.join(&i.stage)] {
             if absent(path) {
                 continue;
@@ -153,9 +154,12 @@ pub(crate) fn apply(
         check_names(app, i)?;
         check_destinations_after_stage(i)?;
         checkpoint(Checkpoint::BeforePublish(0))?;
+        check_names(app, i)?;
+        check_destinations_after_stage(i)?;
         check_tree(i, &stage_path, false)?;
         stage_parent(i)?.replace(&i.stage, filename(&i.manifest.snapshot)?, true)?;
         checkpoint(Checkpoint::Published(0))?;
+        check_tree(i, &i.manifest.snapshot, false)?;
         for n in 0..r.install.as_ref().ok_or_else(journal_error)?.links.len() {
             let i = r.install.as_mut().ok_or_else(journal_error)?;
             let l = &mut i.links[n];
@@ -179,6 +183,8 @@ pub(crate) fn apply(
             }
             checkpoint(Checkpoint::BeforePublish(n + 1))?;
             check_names(app, i)?;
+            check_link_destination(l, &i.manifest.name, &i.stage)?;
+            check_tree(i, &i.manifest.snapshot, false)?;
             let d = link_dir(l)?.ok_or_else(conflict)?;
             let current_stage = Directory::open(&l.root.path.join(&i.stage))?;
             if current_stage.chain != stage.chain || current_stage.link("link")? != l.published {
@@ -214,10 +220,7 @@ fn check_destinations_after_stage(i: &Install) -> Result<(), AppError> {
         return Err(conflict());
     }
     for l in &i.links {
-        l.root.check()?;
-        if !absent(&l.path) {
-            return Err(conflict());
-        }
+        check_link_destination(l, &i.manifest.name, &i.stage)?;
     }
     Ok(())
 }

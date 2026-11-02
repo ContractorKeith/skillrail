@@ -3,6 +3,8 @@ use crate::{AppError, files, guarded_fs::Directory, mutation::refused};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 mod git;
+mod local;
+mod metadata;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -114,51 +116,19 @@ pub(crate) fn collect(r: &InstallRequest) -> Result<Source, AppError> {
             "Select distinct agents, user|project scope, and a contained skill subpath; --ref requires --git.",
         ));
     }
-    let (all, origin, revision) = if r.git {
+    let (entries, origin, revision, selected) = if r.git {
         git::collect(r)?
     } else {
-        // Canonical temp ancestors are accepted, but source components themselves cannot be aliases.
-        let p = std::path::absolute(&r.source).map_err(|_| unsafe_source())?;
-        let d = Directory::open(&p)?;
-        let first = local_entries(&p)?;
-        if Directory::open(&p)?.chain != d.chain || local_entries(&p)? != first {
-            return Err(unsafe_source());
-        }
+        let root = std::path::absolute(&r.source).map_err(|_| unsafe_source())?;
+        let (entries, selected) = local::collect(&root, r.skill.as_deref())?;
         (
-            first,
-            p.to_str().ok_or_else(unsafe_source)?.to_owned(),
+            entries,
+            root.to_str().ok_or_else(unsafe_source)?.to_owned(),
             None,
+            selected,
         )
     };
-    let candidates: Vec<_> = all
-        .iter()
-        .filter_map(|e| {
-            if e.path == "SKILL.md" {
-                Some(".".to_owned())
-            } else {
-                e.path.strip_suffix("/SKILL.md").map(str::to_owned)
-            }
-        })
-        .collect();
-    let selected = match &r.skill {
-        Some(s) if candidates.contains(s) => s.clone(),
-        None if candidates.len() == 1 => candidates[0].clone(),
-        _ => return Err(unsafe_source()),
-    };
-    let prefix = if selected == "." {
-        String::new()
-    } else {
-        format!("{selected}/")
-    };
-    let entries: Vec<_> = all
-        .into_iter()
-        .filter_map(|mut e| {
-            e.path.strip_prefix(&prefix).map(str::to_owned).map(|p| {
-                e.path = p;
-                e
-            })
-        })
-        .collect();
+    validate_entries(&entries)?;
     let skill = entries
         .iter()
         .find(|e| e.path == "SKILL.md")
@@ -167,21 +137,7 @@ pub(crate) fn collect(r: &InstallRequest) -> Result<Source, AppError> {
         return Err(unsafe_source());
     }
     let text = std::str::from_utf8(&skill.bytes).map_err(|_| unsafe_source())?;
-    let m = crate::discovery::parse_metadata(text).map_err(|_| unsafe_source())?;
-    let name = m
-        .name
-        .filter(|s| {
-            segment(s)
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-        })
-        .ok_or_else(unsafe_source)?;
-    if m.description.is_none_or(|s| s.is_empty() || s.len() > 4096)
-        || name.eq_ignore_ascii_case("synced")
-        || name.starts_with("anthropic-skills")
-    {
-        return Err(unsafe_source());
-    }
+    let name = metadata::validate(text, &r.agents)?;
     let content_hash = hash(&entries);
     Ok(Source {
         entries,
@@ -198,90 +154,45 @@ pub(crate) fn collect(r: &InstallRequest) -> Result<Source, AppError> {
         },
     })
 }
-pub(crate) fn local_entries(root: &Path) -> Result<Vec<Entry>, AppError> {
-    fn walk(
-        root: &Path,
-        path: &Path,
-        out: &mut Vec<Entry>,
-        budget: &mut usize,
-        depth: usize,
-    ) -> Result<(), AppError> {
-        if depth > 32 {
-            return Err(unsafe_source());
-        }
-        let d = Directory::open(path)?;
-        let mut names = fs::read_dir(path)
-            .map_err(|_| unsafe_source())?
-            .take(1002)
-            .map(|e| e.map(|e| e.file_name()).map_err(|_| unsafe_source()))
-            .collect::<Result<Vec<_>, _>>()?;
-        names.sort();
-        if names.len() > 1000 {
-            return Err(unsafe_source());
-        }
-        let mut folded = std::collections::BTreeSet::new();
-        for n in names {
-            let n = n.to_str().ok_or_else(unsafe_source)?;
-            if n == ".git" {
-                continue;
-            }
-            if n.eq_ignore_ascii_case(".git")
-                || !segment(n)
-                || !folded.insert(n.to_ascii_lowercase())
-                || [".skillrail", ".claude-plugin", ".gitmodules"]
-                    .contains(&n.to_ascii_lowercase().as_str())
-            {
-                return Err(unsafe_source());
-            }
-            let p = path.join(n);
-            let meta = fs::symlink_metadata(&p).map_err(|_| unsafe_source())?;
-            if meta.is_dir() {
-                out.push(Entry {
-                    path: p
-                        .strip_prefix(root)
-                        .map_err(|_| unsafe_source())?
-                        .to_str()
-                        .ok_or_else(unsafe_source)?
-                        .into(),
-                    bytes: vec![],
-                    executable: false,
-                    directory: true,
-                });
-                if out.len() > 1000 {
-                    return Err(unsafe_source());
-                }
-                walk(root, &p, out, budget, depth + 1)?;
-            } else {
-                let s = d.read(n, false)?.ok_or_else(unsafe_source)?;
-                *budget = budget
-                    .checked_sub(s.bytes.len())
-                    .ok_or_else(unsafe_source)?;
-                out.push(Entry {
-                    path: p
-                        .strip_prefix(root)
-                        .map_err(|_| unsafe_source())?
-                        .to_str()
-                        .ok_or_else(unsafe_source)?
-                        .into(),
-                    directory: false,
-                    executable: s.mode() & 0o111 != 0,
-                    bytes: s.bytes,
-                });
-                if out.len() > 1000 {
-                    return Err(unsafe_source());
-                }
-            }
-        }
-        if Directory::open(path)?.chain != d.chain {
-            return Err(unsafe_source());
-        }
-        Ok(())
-    }
-    let mut out = vec![];
-    walk(root, root, &mut out, &mut (512 * 1024), 0)?;
-    if out.iter().any(|e| !relative(&e.path)) {
+
+// One selected-tree representation is admitted by every source and journal path.
+pub(super) fn validate_entries(entries: &[Entry]) -> Result<(), AppError> {
+    let mut nodes = std::collections::BTreeMap::new();
+    let mut folded = std::collections::BTreeSet::new();
+    let mut bytes = 0usize;
+    if entries.is_empty() || entries.len() > 1000 {
         return Err(unsafe_source());
     }
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    for entry in entries {
+        if entry.path == "."
+            || !relative(&entry.path)
+            || entry.path.split('/').any(|p| {
+                [".git", ".skillrail", ".claude-plugin", ".gitmodules"]
+                    .contains(&p.to_ascii_lowercase().as_str())
+            })
+            || nodes.insert(entry.path.as_str(), entry.directory).is_some()
+            || !folded.insert(entry.path.to_ascii_lowercase())
+            || (entry.directory && (!entry.bytes.is_empty() || entry.executable))
+        {
+            return Err(unsafe_source());
+        }
+        bytes = bytes
+            .checked_add(entry.bytes.len())
+            .ok_or_else(unsafe_source)?;
+        if bytes > 512 * 1024 {
+            return Err(unsafe_source());
+        }
+    }
+    for entry in entries {
+        for parent in Path::new(&entry.path)
+            .ancestors()
+            .skip(1)
+            .filter(|p| !p.as_os_str().is_empty())
+        {
+            if nodes.get(parent.to_str().ok_or_else(unsafe_source)?) != Some(&true) {
+                return Err(unsafe_source());
+            }
+        }
+    }
+    Ok(())
 }

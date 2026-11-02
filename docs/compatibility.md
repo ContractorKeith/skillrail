@@ -125,7 +125,10 @@ External repository/unknown ownership never transfers to Skillrail.
 ## Metadata and fingerprints
 
 `SKILL.md` must be a regular, UTF-8 file of at most 64 KiB, with YAML frontmatter.
-Claude can fall back to the folder name; Codex requires name and description.
+Inventory falls back to the folder name for Claude; Skillrail conservatively
+requires explicit name/description for Codex inventory and owned installs. The
+pinned native Codex parser below can derive a default name: the explicit-name
+requirement is an application limit, not a native limitation.
 Names use the conservative ASCII alphanumeric/underscore/hyphen subset (128
 bytes); descriptions have a 4096-byte limit. Unsupported metadata stays a row
 with diagnostics. Unknown YAML keys are ignored, not executed. Skill bodies,
@@ -581,7 +584,7 @@ The real PTY smoke covers source and explicit selection, form/preview cancellati
 apply, history, undo cancellation/application and terminal restoration.
 
 The [CLI install contract](CLI.md#owned-snapshot-installation) lists exact syntax,
-source budgets, ASCII-only names, all-source-symlink refusal, local ordinary/bare
+selected-tree budgets, ASCII-only names, selected-tree-symlink refusal, local ordinary/bare
 Git support and credential-free HTTPS-only remote support. Git plumbing runs in
 private bare metadata; source configuration, hooks, filters and scripts are not
 executed. Inventory remains offline with five unchanged read-only MCP tools.
@@ -641,3 +644,52 @@ before copying and including HEAD/packed-refs bytes in the 64 MiB budget. The
 parent's failing-first fixture used 10302 empty directories to prove that
 per-directory limits alone did not bound work. Combined Linux acceptance passed 135 Rust tests, strict fmt/Clippy, existing
 smokes and the additional portable/deterministic resize-input PTY regressions.
+
+
+### M5 Spec/QA corrections
+
+Explicit local/Git subpath resolution now precedes content budgets and path
+validation. Separate bounded candidate discovery reads names/tree records only;
+metadata acquisition retains the parent's cumulative 10000-entry/64 MiB bounds.
+Fixtures install a selected skill beside unrelated 530000-byte files, Unicode
+assets, internal links and plugin manifests. Selected content and ancestors keep
+the existing no-follow/owner/ACL/containment rules. Selected Git trees reject
+malformed paths, duplicate entries, inconsistent types, prefix/case collisions
+before preview; generated recovery records validate before the first journal
+save. Malformed unrelated Git subtrees do not invalidate explicit valid selection.
+
+Codex metadata evidence is the exact [native parser at
+6ff1e1ca3b30fc8b914720681fcf5fe62e95f856](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/skills/src/parser.rs),
+SHA-256 `f3532df1cc16f4da423b8e5c813269940c90317bcd211b6659cad449fd877e89`.
+Its name limit is 64 characters; it normalizes whitespace and requires a nonempty
+description, and parses optional metadata as a mapping with optional string
+short-description. Install validation uses each selected adapter's constraints;
+dual-agent selection takes their intersection. Inventory's broader diagnostic
+parser and its 128-byte conservative name budget are not native install admission.
+An optional `TMPDIR=/home/contractorkeith/.cache/s5 python3 scripts/install-evidence.py`
+passed exact extracted `validate_len`/`sanitize_single_line` functions with 64/65,
+empty/whitespace and removed-limit negative controls. It requires rustc, Python 3
+and access to the pinned raw source; it is outside offline acceptance. This is
+source/function evidence, not full native YAML/discovery or session-loading proof.
+
+The [official Claude skills documentation](https://code.claude.com/docs/en/skills#where-skills-live)
+reserves the `synced` folder in any capitalization. Its [synced namespace
+rules](https://code.claude.com/docs/en/skills#names-reserved-for-synced-skills)
+reserve exact `anthropic-skills` and its colon namespace, not the benign
+`anthropic-skills-helper` prefix. These reservations apply only when Claude is
+selected; Codex-only fixtures prove those names remain available. Colon names
+are separately outside Skillrail's conservative grammar. No native session was
+launched to infer these rules.
+
+Mutation admission now retains explicit completeness and directory identity for
+each supported skill root. Consumer checks require both agents' selected-context
+roots, while collision checks require only selected agents' roots. Root errors,
+unsafe aliases, unsupported/malformed candidates, 10000-entry truncation and
+relevant plugin/fallback incompleteness refuse rather than establish absence.
+The generic known `coverage_partial` diagnostic remains distinct. Destination
+case enumeration rejects overflow and reserves its stage/link capacity; native
+name/case checks repeat at publication, and the published snapshot is rechecked
+before links. Regressions preserve snapshots/unknown aliases under budget,
+permission and malformed-root failures, and preserve late external case/native
+collisions. References outside the supported inventory context remain outside
+these guarantees; same-user syscall races and storage limits remain unchanged.

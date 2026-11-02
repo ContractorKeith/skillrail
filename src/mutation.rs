@@ -236,6 +236,7 @@ impl Journal {
         Ok((record, bytes))
     }
     fn save(&self, record: &Record, expected: Option<&Snapshot>) -> Result<Snapshot, AppError> {
+        install::validate_record(record)?;
         self.check()?;
         let name = format!("{}.json", record.id);
         if self.dir.read(&name, true)?.as_ref() != expected {

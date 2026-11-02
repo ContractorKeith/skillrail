@@ -105,6 +105,7 @@ pub(super) fn validate_record(r: &Record) -> Result<(), AppError> {
             Ok(())
         };
     };
+    install_source::validate_entries(&i.entries).map_err(|_| journal_error())?;
     if r.version != 3
         || !r.changes.is_empty()
         || !r.undo_changes.is_empty()
@@ -310,8 +311,54 @@ fn link_dir(l: &Link) -> Result<Option<Directory>, AppError> {
     }
     Ok(Some(d))
 }
+fn require_complete_skill_scan(
+    inventory: &crate::Inventory,
+    roots: &[crate::discovery::SkillRootScan],
+    agents: &[Agent],
+) -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+    for root in roots
+        .iter()
+        .filter(|r| agents.contains(&r.agent) && matches!(r.scope, Scope::User | Scope::Project))
+    {
+        if !root.complete {
+            return Err(refused(
+                "A relevant skill root scan is incomplete; resolve its inventory diagnostics before installing or undoing.",
+            ));
+        }
+        if !root.absent {
+            if Some(Directory::open(&root.path)?.chain) != root.chain {
+                return Err(conflict());
+            }
+            let mode = fs::metadata(&root.path)
+                .map_err(|_| conflict())?
+                .permissions()
+                .mode();
+            if mode & 0o444 == 0 || mode & 0o111 == 0 {
+                return Err(refused(
+                    "A relevant skill root lacks read/search permissions; no absence was inferred.",
+                ));
+            }
+        }
+    }
+    if inventory.diagnostics.iter().any(|d| {
+        d.code == "plugin_budget_exceeded"
+            || (d.code == "worktree_fallback_unknown" && agents.contains(&Agent::Claude))
+            || (d.code.starts_with("plugin_")
+                && !["plugin_deferred", "plugin_mcp_unknown"].contains(&d.code.as_str())
+                && d.location
+                    .as_ref()
+                    .is_some_and(|l| agents.contains(&l.agent)))
+    }) {
+        return Err(refused(
+            "Relevant plugin or fallback skill discovery is incomplete; resolve its inventory diagnostics before mutation.",
+        ));
+    }
+    Ok(())
+}
 fn validate_consumers(app: &Application, i: &Install) -> Result<(), AppError> {
-    let inventory = crate::discovery::discover(&app.paths, 0);
+    let (inventory, roots) = crate::discovery::discover_with_roots(&app.paths, 0);
+    require_complete_skill_scan(&inventory, &roots, &[Agent::Claude, Agent::Codex])?;
     if inventory.occurrences.iter().any(|o| {
         o.canonical_path
             .clone()
@@ -371,7 +418,9 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
     Ok(())
 }
 fn check_names(app: &Application, i: &Install) -> Result<(), AppError> {
-    let inventory = crate::discovery::discover(&app.paths, 0);
+    let (inventory, roots) = crate::discovery::discover_with_roots(&app.paths, 0);
+    let agents: Vec<_> = i.request.agents.iter().map(|a| agent(a)).collect();
+    require_complete_skill_scan(&inventory, &roots, &agents)?;
     if inventory.occurrences.iter().any(|o| {
         i.request.agents.iter().any(|a| agent(a) == o.agent)
             && o.canonical_path.as_ref() != Some(&i.manifest.snapshot)
@@ -386,31 +435,49 @@ fn check_names(app: &Application, i: &Install) -> Result<(), AppError> {
     }
     Ok(())
 }
+fn check_link_destination(l: &Link, name: &str, stage: &str) -> Result<(), AppError> {
+    l.root.check()?;
+    let Some(directory) = link_dir(l)? else {
+        return Ok(());
+    };
+    if !absent(&l.path) {
+        return Err(conflict());
+    }
+    let entries = fs::read_dir(&l.root.path)
+        .map_err(|_| conflict())?
+        .take(10_001)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| conflict())?;
+    if Directory::open(&l.root.path)?.chain != directory.chain {
+        return Err(conflict());
+    }
+    // Reserve the stage and published link, so our own lifecycle cannot turn a
+    // previously complete root into an over-budget consumer scan during undo.
+    let reserved = if entries.iter().any(|e| e.file_name() == stage) {
+        1
+    } else {
+        2
+    };
+    if entries.len() + reserved > 10_000 {
+        return Err(refused(
+            "Destination root lacks bounded enumeration capacity for staging and publication; no absence was inferred.",
+        ));
+    }
+    if entries
+        .iter()
+        .any(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name))
+    {
+        return Err(conflict());
+    }
+    Ok(())
+}
 fn check_destinations(i: &Install) -> Result<(), AppError> {
     i.store.check()?;
     if !absent(&i.manifest.snapshot) || !absent(&i.store.path.join(&i.stage)) {
         return Err(conflict());
     }
-    for l in &i.links {
-        l.root.check()?;
-        if link_dir(l)?.is_some() {
-            // Refuse case aliases and any existing content, including dangling links.
-            if !absent(&l.path) {
-                return Err(conflict());
-            }
-            for e in fs::read_dir(&l.root.path)
-                .map_err(|_| conflict())?
-                .take(10001)
-            {
-                let e = e.map_err(|_| conflict())?;
-                if e.file_name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&i.manifest.name)
-                {
-                    return Err(conflict());
-                }
-            }
-        }
+    for link in &i.links {
+        check_link_destination(link, &i.manifest.name, &i.stage)?;
     }
     Ok(())
 }
@@ -540,6 +607,7 @@ pub(super) fn plan(record: Record, undo: bool, before: Option<Snapshot>) -> Resu
     })
 }
 pub(super) fn admit(r: &Record) -> Result<(), AppError> {
+    validate_record(r)?;
     let mut worst = r.clone();
     let i = worst.install.as_mut().ok_or_else(journal_error)?;
     let max = Snapshot::reservation(&[]).identity;
