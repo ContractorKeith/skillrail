@@ -1,4 +1,4 @@
-# M0 CLI contract
+# CLI contract (M1)
 
 Implemented commands: `version`, `scan [--json]`, `list [--json]`, `tui`.
 No subcommand means `tui`. `--help` and `--version` require no application state.
@@ -11,7 +11,7 @@ subcommand. Explicit flags take precedence. Relative paths resolve against the
 process working directory. Home and project must exist and be directories;
 paths must be UTF-8. Output context contains absolute, canonical paths, with
 symlinks resolved. State is created if necessary after home/project validation.
-Only the state directory receives application writes in M0.
+Only the state directory receives application writes.
 
 | Path | Default |
 |---|---|
@@ -22,12 +22,12 @@ Only the state directory receives application writes in M0.
 
 An explicit `--home` makes the default state directory relative to that selected
 home, ignoring `XDG_DATA_HOME`. An explicit `--state-dir` overrides every state
-default. Relative `XDG_DATA_HOME` is ignored. No other environment variables or
-configuration files are interpreted; `CODEX_HOME` is not read. Tests and smokes
+default. Relative `XDG_DATA_HOME` is ignored. No other environment variables affect path resolution; `CODEX_HOME` is not read. Tests and smokes
 supply fixture paths explicitly and never reassign HOME or CODEX_HOME.
 
-M0 does not traverse agent directories, parse agent configuration, or execute
-agent commands. The selected home/project are context for future adapters.
+M1 reads standalone skill folders and bounded local provenance/config evidence.
+See [compatibility](compatibility.md) for supported roots and restrictions.
+Agent commands and skill content are never executed during scans.
 
 ## Inventory JSON, schema version 1
 
@@ -37,42 +37,35 @@ newline on stdout. Successful JSON commands have no stderr diagnostics;
 inventory diagnostics are structured inside the object. No progress text or
 terminal escapes enter JSON stdout.
 
-```json
-{
-  "schema_version": 1,
-  "context": {
-    "home": "/fixture/home",
-    "project": "/fixture/project",
-    "state_dir": "/fixture/state"
-  },
-  "scanned_at_unix_ms": 1793624400000,
-  "discovery": {"status": "not_implemented", "adapters": []},
-  "items": [],
-  "occurrences": [],
-  "diagnostics": [{
-    "code": "discovery_not_implemented",
-    "message": "M0 has no discovery adapters; empty inventory does not establish absence of skills or MCP entries."
-  }]
-}
-```
+The version-1 object retains `schema_version`, resolved `context`,
+`scanned_at_unix_ms`, `discovery`, `items`, `occurrences`, and `diagnostics`.
+M1 fills the previously empty item/occurrence arrays with typed records:
 
-| Field | Type/meaning |
-|---|---|
-| `schema_version` | Integer, currently 1 |
-| `context` | Object of three resolved UTF-8 path strings |
-| `scanned_at_unix_ms` | Nonnegative integer milliseconds since Unix epoch |
-| `discovery.status` | `not_implemented` in M0 |
-| `discovery.adapters` | Empty array in M0; no claim of adapter coverage |
-| `items`, `occurrences` | Empty arrays in M0; populated record schemas are deferred |
-| `diagnostics` | Array of objects with string `code` and `message` |
+- Item: `id`, `kind` (`skill`), `name`, optional `description`, `source`
+  (`identity`, `evidence`, optional `repository`/`subpath`, `owner`),
+  `name_collision`, and `drift` (`single_source`, `equal`, `drifted`, `unknown`).
+- Occurrence: stable `id`, `item_id`, `name`, `agent` (`claude`/`codex`),
+  `scope` (`user`/`project`), `original_path`, nullable `canonical_path`,
+  `visibility` (`status` and `reasons`), `fingerprint` (`algorithm`, nullable
+  `sha256`, `diagnostics`), and metadata/target `diagnostics`.
+- Discovery: `status: standalone_skills_partial`, adapters
+  `claude_standalone_v1` and `codex_standalone_v1`.
+- Top-level diagnostics: safe `code`/`message` pairs. `coverage_partial` always
+  states excluded coverage. Root failures and configuration errors add explicit
+  diagnostics. Per-occurrence diagnostics must also be inspected.
 
-For the same resolved context, output is deterministic except the scan timestamp.
-Array order is deterministic. There are no item IDs yet because there are no
-items. Clients should inspect schema version and diagnostic codes, rather than
-parse human messages. Plain-text list/scan shows context and scan time as well
-as the discovery limitation. The TUI displays the same scan's time and limitation.
-Human-readable paths escape control characters (including embedded newlines);
-JSON retains the original path values with normal JSON string escaping.
+`scan` and `list` both refresh. Results are sorted by stable IDs; timestamps
+are the only expected difference for unchanged supported fixture trees. Deleting
+the cache and rescanning preserves identities and facts. Unknown states do not
+cause an operational error or imply absence. Source and original paths can
+contain controls: JSON uses ordinary escaping, while human output and TUI
+escape terminal controls and bidirectional formatting controls.
+
+Plain list/scan prints context, scan time and every item's explanations.
+The TUI uses exactly the same inventory and human explanation formatter: arrows
+select items, PgUp/PgDn scroll details, `r` rescans, q/Esc/Ctrl-C quit.
+Diagnostics remain available below the selected item's details. A small terminal
+can scroll the entire view. Search/filters, MCP and mutations remain later work.
 
 ## Cache
 
@@ -80,8 +73,9 @@ JSON retains the original path values with normal JSON string escaping.
 independent of the public JSON schema version. A single-row `scan` table stores
 the allowlisted JSON snapshot. Schema initialization and snapshot replacement
 use one transaction, so a failed replacement does not publish a partial scan.
-Reads rebuild rather than trusting stale cached inventory. This is an M0
-snapshot cache; query tables can follow when actual inventory exists.
+Reads rebuild rather than trusting stale cached inventory. The snapshot stores
+the allowlisted typed inventory; normalized query tables can follow when query
+interfaces require them.
 
 With all Skillrail processes stopped, removing `index.sqlite3` and rerunning
 scan/list rebuilds the same normalized inventory. Unsupported schema versions
@@ -95,10 +89,10 @@ untrusted writers or hard-link an existing database into them.
 
 ## Errors and exits
 
-Exit 0 means success (including an empty implemented inventory with an explicit
-unimplemented-discovery diagnostic). Operational errors exit 1; argument errors
+Exit 0 means a completed scan/cache replacement, including explicit unknown or
+partial inventory states. Operational errors exit 1; argument errors
 exit 2. Planned exits 3 (not found) and 4 (conflict/refused/unsupported mutation)
-have no M0 command yet.
+have no implemented command yet.
 
 Operational errors produce no stdout. With `scan --json` or `list --json`, stderr
 contains one object of this form:

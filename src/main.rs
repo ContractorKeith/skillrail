@@ -5,7 +5,10 @@ use std::path::PathBuf;
 mod output;
 
 #[derive(Parser)]
-#[command(version, about = "Local-first skill and MCP registry (M0 harness)")]
+#[command(
+    version,
+    about = "Local-first skill and MCP registry (standalone skill inventory)"
+)]
 struct Cli {
     /// Selected home directory (defaults to HOME).
     #[arg(long, global = true)]
@@ -24,14 +27,14 @@ struct Cli {
 enum Commands {
     /// Print the application version without opening state.
     Version,
-    /// Interactive empty inventory (requires a terminal).
+    /// Interactive skill inventory (requires a terminal).
     Tui,
-    /// Fresh inventory; discovery adapters arrive after M0.
+    /// Fresh standalone skill inventory and explanations.
     Scan {
         #[arg(long)]
         json: bool,
     },
-    /// Fresh inventory; discovery adapters arrive after M0.
+    /// Fresh standalone skill inventory and explanations.
     List {
         #[arg(long)]
         json: bool,
@@ -77,12 +80,19 @@ fn main() -> std::process::ExitCode {
                 output::stdout(&format!("{output}\n"))?;
             } else {
                 output::stdout(&format!(
-                    "M0: discovery not implemented; 0 indexed items.\nHome: {}\nProject: {}\nState: {}\nLast scan: {} (Unix ms)\n",
+                    "Standalone skill inventory: {} items (partial coverage).\nHome: {}\nProject: {}\nState: {}\nLast scan: {} (Unix ms)\n",
+                    inventory.items.len(),
                     output::human_path(&inventory.context.home),
                     output::human_path(&inventory.context.project),
                     output::human_path(&inventory.context.state_dir),
                     inventory.scanned_at_unix_ms,
                 ))?;
+                for index in 0..inventory.items.len() {
+                    output::stdout(&skillrail::presentation::details(&inventory, index))?;
+                }
+                for diagnostic in &inventory.diagnostics {
+                    output::stdout(&format!("{}: {}\n", diagnostic.code, diagnostic.message))?;
+                }
             }
         }
         Ok(())

@@ -46,7 +46,9 @@ fn closed_stdout_returns_operational_error_without_panicking() {
 #[test]
 fn human_paths_escape_controls_while_json_preserves_paths() {
     let root = tempfile::tempdir().unwrap();
-    let project = root.path().join("project-\u{1b}[2J\nforged\u{9}\u{85}");
+    let project = root
+        .path()
+        .join("project-\u{1b}[2J\nforged\u{9}\u{85}\u{202e}");
     std::fs::create_dir(&project).unwrap();
     let plain = command(root.path())
         .arg("list")
@@ -57,7 +59,8 @@ fn human_paths_escape_controls_while_json_preserves_paths() {
     assert!(plain.status.success());
     let text = String::from_utf8(plain.stdout).unwrap();
     assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
-    assert_eq!(text.lines().count(), 5, "path newline must not forge a row");
+    assert!(!text.contains('\u{202e}'));
+    assert_eq!(text.lines().count(), 6, "path newline must not forge a row");
     let json = command(root.path())
         .args(["list", "--json"])
         .arg("--project")

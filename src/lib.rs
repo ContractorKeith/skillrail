@@ -1,4 +1,9 @@
-//! Shared application core. M0 deliberately has no discovery adapters.
+//! Shared application core and verified transactional cache.
+pub mod discovery;
+mod files;
+mod fingerprint;
+pub mod presentation;
+mod provenance;
 pub mod tui;
 
 use rusqlite::{Connection, OpenFlags, params};
@@ -142,8 +147,8 @@ pub struct Inventory {
     pub context: Paths,
     pub scanned_at_unix_ms: u64,
     pub discovery: Discovery,
-    pub items: Vec<serde_json::Value>,
-    pub occurrences: Vec<serde_json::Value>,
+    pub items: Vec<discovery::Item>,
+    pub occurrences: Vec<discovery::Occurrence>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -166,18 +171,7 @@ impl Application {
             .as_millis()
             .try_into()
             .map_err(|_| AppError::new("clock_unavailable", "System time is out of range."))?;
-        let inventory = Inventory {
-            schema_version: SCHEMA_VERSION,
-            context: self.paths.clone(),
-            scanned_at_unix_ms,
-            discovery: Discovery { status: "not_implemented".into(), adapters: vec![] },
-            items: vec![],
-            occurrences: vec![],
-            diagnostics: vec![Diagnostic {
-                code: "discovery_not_implemented".into(),
-                message: "M0 has no discovery adapters; empty inventory does not establish absence of skills or MCP entries.".into(),
-            }],
-        };
+        let inventory = discovery::discover(&self.paths, scanned_at_unix_ms);
         self.replace_index(&inventory)?;
         Ok(inventory)
     }

@@ -6,9 +6,9 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-M0 merged in PR #9 — 2026-11-02. Discovery adapters remain unimplemented;
-M1 supplies skill discovery. Eleven integration tests, CLI/PTY smokes and
-Linux/macOS CI pass; independent review/attack findings are fixed.
+M0 merged in PR #9 — 2026-11-02. M1 implements standalone skill inventory;
+see docs/compatibility.md for coverage, version evidence and limitations.
+Independent M1 review/attack and macOS verification remain orchestrator gates.
 
 ## Commands
 `bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
@@ -16,7 +16,7 @@ Linux/macOS CI pass; independent review/attack findings are fixed.
 `cargo clippy --locked --all-targets -- -D warnings`.
 
 ## Pointers
-- docs/CLI.md: implemented M0 commands, JSON, paths and cache/error contracts.
+- docs/CLI.md: implemented commands, JSON, paths and cache/error contracts.
 - docs/PLAN.md: canonical spec, contracts, milestones and acceptance.
 - CONTEXT.md: glossary; docs/grill.md: confirmed interview decisions.
 - Session state: ../worklog/projects/skillrail.md. No repo-local worklog.
