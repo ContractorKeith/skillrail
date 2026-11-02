@@ -34,7 +34,7 @@ def cli_smoke(binary, root):
         assert any(i["name_collision"] for i in inventory["items"])
         assert any(i["drift"] == "drifted" for i in inventory["items"])
         assert len({o["canonical_path"] for o in inventory["occurrences"]}) == 4
-        assert inventory["discovery"] == {"status": "standalone_skills_partial", "adapters": ["claude_standalone_v1", "codex_standalone_v1"]}
+        assert inventory["discovery"] == {"status": "inventory_partial", "adapters": ["claude_standalone_v1", "codex_standalone_v1", "claude_mcp_plugins_v1", "codex_mcp_plugins_v1"]}
         assert inventory["diagnostics"][0]["code"] == "coverage_partial"
         assert inventory["context"] == {"home": str(root / "home"),
                                         "project": str(root / "project"),
@@ -58,7 +58,7 @@ def tui_smoke(binary, root, fail_refresh=False):
                                    stdout=slave, stderr=slave, start_new_session=True)
         output = bytearray()
         deadline = time.monotonic() + 10
-        while b"Standalone skills: 3" not in b" ".join(
+        while b"Skills/MCP: 3" not in b" ".join(
                 re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b" ", output).split()):
             assert time.monotonic() < deadline, f"TUI failed to render before timeout: {output!r}"
             assert process.poll() is None, f"TUI exited before rendering: {output!r}"

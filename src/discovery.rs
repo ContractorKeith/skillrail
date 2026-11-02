@@ -22,6 +22,8 @@ pub enum Agent {
 pub enum Scope {
     User,
     Project,
+    Local,
+    Unknown,
 }
 #[derive(Debug, Serialize)]
 pub struct Visibility {
@@ -56,11 +58,14 @@ pub struct Occurrence {
     pub visibility: Visibility,
     pub fingerprint: Fingerprint,
     pub diagnostics: Vec<String>,
+    pub origin: crate::mcp_inventory::Origin,
+    pub mcp: Option<crate::mcp_inventory::Mcp>,
+    pub capability: crate::mcp_inventory::Capability,
 }
 #[derive(Deserialize)]
-struct Metadata {
-    name: Option<String>,
-    description: Option<String>,
+pub(crate) struct Metadata {
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
     #[serde(rename = "disable-model-invocation")]
     disable_model_invocation: Option<bool>,
     #[serde(rename = "user-invocable")]
@@ -109,14 +114,19 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         context: paths.clone(),
         scanned_at_unix_ms: timestamp,
         discovery: Discovery {
-            status: "standalone_skills_partial".into(),
-            adapters: vec!["claude_standalone_v1".into(), "codex_standalone_v1".into()],
+            status: "inventory_partial".into(),
+            adapters: vec![
+                "claude_standalone_v1".into(),
+                "codex_standalone_v1".into(),
+                "claude_mcp_plugins_v1".into(),
+                "codex_mcp_plugins_v1".into(),
+            ],
         },
         items: vec![],
         occurrences: vec![],
         diagnostics: vec![diagnostic(
             "coverage_partial",
-            "Standalone user/project skills only. Admin, bundled, legacy commands, custom homes, plugins and MCP are not inventoried; runtime policy/trust is unresolved.",
+            "Supported standalone skills, MCP definitions and plugin cache candidates. Admin, bundled/account content, marketplace overrides, custom homes and unknown plugin layouts remain unsupported; runtime trust/selection/precedence is unresolved.",
         )],
     };
     let ancestors = project_ancestors(&paths.project);
@@ -255,7 +265,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             {
                 inventory.diagnostics.push(diagnostic(
                     "plugin_deferred",
-                    "A skills-directory plugin was excluded; plugin discovery belongs to M2.",
+                    "A skills-directory plugin is excluded from standalone skill discovery; the plugin adapter observes supported components separately. Root SKILL.md without declared skills is unsupported.",
                 ));
                 continue;
             }
@@ -401,9 +411,13 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
                 visibility: Visibility { status, reasons },
                 fingerprint,
                 diagnostics: problems,
+                origin: crate::mcp_inventory::Origin::Standalone,
+                mcp: None,
+                capability: crate::mcp_inventory::Capability::standalone_skill(),
             });
         }
     }
+    crate::mcp_inventory::discover(paths, &mut inventory);
     let claude_user_names: BTreeSet<String> = inventory
         .occurrences
         .iter()
@@ -420,10 +434,15 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             }
         }
     }
-    let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let kinds: BTreeMap<_, _> = inventory
+        .items
+        .iter()
+        .map(|i| (i.id.clone(), i.kind))
+        .collect();
+    let mut names: BTreeMap<(&str, String), BTreeSet<String>> = BTreeMap::new();
     for occurrence in &inventory.occurrences {
         names
-            .entry(occurrence.name.clone())
+            .entry((kinds[&occurrence.item_id], occurrence.name.clone()))
             .or_default()
             .insert(occurrence.item_id.clone());
     }
@@ -431,7 +450,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         item.name_collision = inventory
             .occurrences
             .iter()
-            .any(|o| o.item_id == item.id && names[&o.name].len() > 1);
+            .any(|o| o.item_id == item.id && names[&(item.kind, o.name.clone())].len() > 1);
         let occurrences: Vec<_> = inventory
             .occurrences
             .iter()
@@ -487,7 +506,7 @@ fn confirmed_absent(path: &Path) -> bool {
     false
 }
 
-fn metadata(path: &Path) -> Result<Metadata, ()> {
+pub(crate) fn metadata(path: &Path) -> Result<Metadata, ()> {
     let text = files::text(&path.join("SKILL.md"), 64 * 1024)?;
     let mut lines = text.lines();
     if lines.next() != Some("---") {

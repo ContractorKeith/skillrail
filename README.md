@@ -4,12 +4,13 @@ A local-first skill and MCP registry for Claude Code and Codex. Planned v1
 explains provenance, configured visibility and local drift, with deliberate,
 recoverable changes. See [the build plan](docs/PLAN.md) for scope and acceptance.
 
-**Status:** M1 standalone skill inventory. CLI and TUI explain local source
-identity, aliases, name collisions, configured visibility uncertainty and
-full-folder drift. Scans read supported user/project skill locations and write
-only the disposable cache. [Compatibility](docs/compatibility.md) records
-sources, checked CLI versions, boundaries and pending real-agent verification.
-Plugins, MCP queries and mutations remain later milestones.
+**Status:** M2 read-only skill, MCP and plugin inventory. CLI and TUI explain
+source identity, ownership, configured status, visibility uncertainty and
+full-folder skill drift. MCP values are sanitized before output or caching.
+Plugin caches are observed without taking ownership or changing native lifecycle.
+[Compatibility](docs/compatibility.md) records the supported schemas, source and
+version evidence, uncertainty and pending native/macOS checks. Query tools and
+mutations remain later milestones.
 
 ## Run
 
