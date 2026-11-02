@@ -8,7 +8,9 @@ including review fixes #10–#12. M1 merged in
 reviews/attack and Linux/macOS CI. M2 merged in
 [PR #16](https://github.com/ContractorKeith/skillrail/pull/16) at 771161a after
 independent reviews, adversarial fixes and Linux/macOS CI (59 tests).
-Next: M3.
+M3 merged in [PR #17](https://github.com/ContractorKeith/skillrail/pull/17)
+at 17bc56a after independent reviews, protocol cancellation fixes and
+Linux/macOS CI (70 tests). Next: M4.
 
 | Milestone | Issue |
 |---|---|
