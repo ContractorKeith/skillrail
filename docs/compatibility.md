@@ -517,3 +517,8 @@ made from source inspection or fixtures. No prerequisites are silently skipped
 by `scripts/accept.sh`; the optional pinned-source probe is reported separately.
 Independent full-diff and adversarial review remain the parent's gate before ready
 or merge. Install/update/uninstall remain M5/M6, with no MCP writes added here.
+
+The first M4 macOS CI compile at b2f61e9 found E0617: Darwin's 16-bit `mode_t`
+cannot be passed directly as a C variadic argument to `openat`. The follow-up
+uses the promoted `c_uint` argument on both platforms. Linux acceptance was
+rerun after this fix; macOS rerun results remain an integration check.

@@ -48,13 +48,15 @@ fn cstr(s: &std::ffi::OsStr) -> Result<CString, AppError> {
 fn open_at(parent: &File, name: &std::ffi::OsStr, flags: i32, mode: u32) -> std::io::Result<File> {
     let name = CString::new(name.as_bytes())
         .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    // C variadic arguments require integer promotion; Darwin mode_t is only u16.
+    let promoted_mode: libc::c_uint = mode;
     // SAFETY: parent remains open; name is NUL-terminated, flags/mode are OS constants.
     let fd = unsafe {
         libc::openat(
             parent.as_raw_fd(),
             name.as_ptr(),
             flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
-            mode as libc::mode_t,
+            promoted_mode,
         )
     };
     if fd < 0 {
