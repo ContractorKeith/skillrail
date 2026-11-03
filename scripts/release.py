@@ -228,9 +228,9 @@ def main():
         if args.target != host_target():
             parser.error("build on the matching native host; cross-compilation is not execution evidence")
         command(["cargo", "build", "--locked", "--release", "--target", args.target], cwd=ROOT, timeout=1200)
-        target_dir = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
-        if not target_dir.is_absolute():
-            target_dir = ROOT / target_dir
+        metadata = json.loads(command(
+            ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"], cwd=ROOT))
+        target_dir = Path(metadata["target_directory"])
         binary = (target_dir / args.target / "release/skillrail").resolve()
         smoke(binary, version)
         epoch = int(os.environ.get("SOURCE_DATE_EPOCH", command(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT).strip()))

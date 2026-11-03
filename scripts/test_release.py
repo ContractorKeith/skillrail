@@ -4,6 +4,8 @@ import importlib.util
 import io
 import gzip
 import json
+import os
+import shutil
 import tarfile
 import subprocess
 import sys
@@ -17,6 +19,55 @@ spec.loader.exec_module(release)
 
 
 class Artifacts(unittest.TestCase):
+    def test_build_packages_current_cargo_configured_artifact(self):
+        # Real Cargo, a dependency-free fixture, and a stale default executable.
+        for setting in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "config-file"):
+            with self.subTest(setting=setting), tempfile.TemporaryDirectory(prefix="s7-build-") as directory:
+                root = Path(directory)
+                (root / "scripts").mkdir()
+                (root / "src").mkdir()
+                shutil.copyfile(release.__file__, root / "scripts/release.py")
+                shutil.copyfile(release.ROOT / "LICENSE", root / "LICENSE")
+                (root / "Cargo.toml").write_text(
+                    '[package]\nname="skillrail"\nversion="0.1.0"\nedition="2024"\n')
+                (root / "src/main.rs").write_text('''fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--json") {
+        println!("{}", r#"{"schema_version":1,"items":[{"name":"release-fixture"}],"occurrences":[{}]}"#);
+    } else if args.iter().any(|a| a == "--help") {
+        println!("install");
+    } else { println!("skillrail 0.1.0"); }
+}
+''')
+                env = os.environ.copy()
+                env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+                for key in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
+                    env.pop(key, None)
+                if setting == "config-file":
+                    (root / ".cargo").mkdir()
+                    (root / ".cargo/config.toml").write_text('[build]\ntarget-dir="configured"\n')
+                else:
+                    env[setting] = str(root / "configured")
+                stale = root / "target" / release.host_target() / "release/skillrail"
+                stale.parent.mkdir(parents=True)
+                stale.write_text('#!/bin/sh\necho "skillrail 9.9.9"\n')
+                stale.chmod(0o755)
+                for command in (["git", "init", "-q"],
+                                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                 "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "fixture"],
+                                ["cargo", "generate-lockfile", "--offline"]):
+                    subprocess.run(command, cwd=root, env=env, capture_output=True, check=True, timeout=30)
+                result = subprocess.run(
+                    [sys.executable, "scripts/release.py", "build", "--target", release.host_target(),
+                     "--output", str(root / "assets")], cwd=root, env=env,
+                    capture_output=True, text=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                archive = Path(json.loads(result.stdout)["archive"])
+                actual = root / "configured" / release.host_target() / "release/skillrail"
+                with tarfile.open(archive, "r:gz") as packaged:
+                    self.assertEqual(packaged.extractfile("skillrail").read(), actual.read_bytes())
+                self.assertEqual(stale.read_text(), '#!/bin/sh\necho "skillrail 9.9.9"\n')
+
     def test_extended_header_refuses_before_payload_allocation(self):
         with tempfile.TemporaryDirectory(prefix="s7-header-") as directory:
             archive = Path(directory) / release.archive_name("0.1.0", release.host_target())

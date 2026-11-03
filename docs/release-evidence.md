@@ -141,6 +141,15 @@ CLI flag corrected the probe, not the application. macOS HTTPS remains pending.
 
 ## Remaining parent gates
 
+Release build path correction: Cargo's `build.target-dir` and
+`CARGO_BUILD_TARGET_DIR` could put the new executable outside the packager's
+guessed path. Packaging now resolves `target_directory` through Cargo metadata.
+A dependency-free Rust fixture uses the real Cargo build and packaging commands
+for both settings and `CARGO_TARGET_DIR`, with a stale executable at the default
+path. The former two failed before the fix; all three now package bytes from
+the configured build and preserve the stale file. This verifies artifact
+selection, not another native Skillrail session.
+
 Archive verifier correction: a checksum-valid, roughly 100 KiB gzip containing
 a 101 MiB PAX extended header exhausted an 80 MiB Linux child memory limit
 before member admission. The regression failed before the fix; verification
