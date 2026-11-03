@@ -141,6 +141,16 @@ CLI flag corrected the probe, not the application. macOS HTTPS remains pending.
 
 ## Remaining parent gates
 
+Parent QA correction: fake Homebrew failure probes reproduced failed discovery
+proceeding into mutation, partial tap creation being abandoned, and cleanup
+overwriting the original error. Three regression tests (ten failure/existing-state
+scenarios) now exercise fail-closed discovery, owned partial-tap cleanup,
+independently safe later cleanup, and explicit retained-state recovery. The
+initial run failed eight assertions; the corrected validator passes. These are
+fake-boundary results, not another actual Homebrew install. The existing cleanup
+test now resolves its executable through Cargo metadata; its external-target
+run passed. No real Homebrew mutations were used for these corrections.
+
 | Gate | State |
 |---|---|
 | Linux x86_64 local acceptance/artifact/source install/local Homebrew/HTTPS | Observed above |

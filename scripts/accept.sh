@@ -9,6 +9,7 @@ cargo test --locked
 cargo build --locked
 python3 scripts/test_release.py
 python3 scripts/test_brew_validation.py
+python3 scripts/test_brew_failures.py
 python3 scripts/test_terminal_attributes.py
 python3 scripts/smoke.py
 python3 scripts/pty-readiness-smoke.py

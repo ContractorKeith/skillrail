@@ -27,8 +27,14 @@ TMPDIR=/home/contractorkeith/.cache/s7 bash scripts/validate-brew.sh target/dist
 Requires Homebrew, Python >=3.11, Git, `rg`, a clean `skillrail` install name and
 `skillrail-check/candidate` tap name. It creates a temporary local Git tap,
 installs the archive with its actual SHA-256, runs `brew test` and a populated
-isolated inventory, then uninstalls and untaps. Every brew subprocess has a 300-second timeout;
-a timeout returns to the cleanup trap. Autoremove and install cleanup are disabled
+isolated inventory, then uninstalls and untaps. Discovery errors refuse before
+mutation. A partially created tap is cleaned only when its local Git origin
+matches this run's source. Every brew subprocess has a 300-second timeout;
+a timeout returns to the cleanup trap. Cleanup preserves the original failure
+and attempts each independently safe step. If an install remains, state cannot
+be queried, ownership differs, or untap fails, the tap/source are retained with
+inspection and recovery instructions. Cleanup is never silently reported as
+success. Autoremove and install cleanup are disabled
 to preserve unrelated packages. It never publishes a repository.
 Homebrew may download its own tooling prerequisites. Do not run concurrent
 Homebrew changes during validation. The generated one-host formula is a test

@@ -5,6 +5,7 @@ Uses the real built Skillrail for installed-binary smokes; no real tap.
 The fake package manager models cleanup, not artifact extraction.
 """
 import os
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,7 +24,9 @@ class BrewCleanup(unittest.TestCase):
             tools.mkdir()
             prefix = root / "installed"
             (prefix / "bin").mkdir(parents=True)
-            binary = ROOT / "target/debug/skillrail"
+            metadata = json.loads(subprocess.check_output(
+                ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"], cwd=ROOT))
+            binary = Path(metadata["target_directory"]) / "debug/skillrail"
             (prefix / "bin/skillrail").symlink_to(binary)
             assets = root / "assets"
             stub = root / "archive-fixture"
@@ -36,11 +39,22 @@ class BrewCleanup(unittest.TestCase):
 import os
 from pathlib import Path
 import sys
+import subprocess
+import shutil
 args = sys.argv[1:]
+root = Path(os.environ["BREW_TEST_PREFIX"]).parent
+tap = root / "tap"
 if args == ["list", "--versions", "skillrail"]:
     sys.exit(1)
 if args == ["tap"]:
     sys.exit(0)
+if args[0] == "--repo":
+    print(tap)
+if args[0] == "tap":
+    subprocess.run(["git", "init", "--template=", "-q", str(tap)], check=True)
+    subprocess.run(["git", "-C", str(tap), "remote", "add", "origin", args[2]], check=True)
+if args[0] == "untap":
+    shutil.rmtree(tap)
 if args[0] == "--prefix":
     print(os.environ["BREW_TEST_PREFIX"])
 if args[0] == "uninstall" and os.environ.get("HOMEBREW_NO_AUTOREMOVE") != "1":

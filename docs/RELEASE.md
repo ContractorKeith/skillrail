@@ -120,6 +120,9 @@ pending. Do not disable the guards to obtain a pass.
    then removes its install/tap, with autoremove/cleanup disabled and each brew
    subprocess bounded at 300 seconds. The full proposal uses future versioned HTTPS
    URLs; it does not claim they already exist. See packaging/README.md.
+   Failed discovery refuses before mutation. Cleanup errors preserve the original
+   failure; uncertain ownership or remaining installs retain the candidate tap
+   and source with recovery instructions rather than deleting required state.
 3. Pre-tag: independent full-branch Standards, Spec and adversarial reviews,
    plus a fresh release skeptic. Fix confirmed findings and repeat affected/full
    gates. Parent decides the release is eligible; the worker cannot certify it.
