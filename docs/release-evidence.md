@@ -141,6 +141,15 @@ CLI flag corrected the probe, not the application. macOS HTTPS remains pending.
 
 ## Remaining parent gates
 
+The first Intel macOS candidate job at `ac63a05` failed before packaging in
+`m5-smoke.py`'s immediate undo-preview assertion. Reading the actual PTY in
+64-byte fragments reproduced that assertion on Linux. M5 now uses M4's pinned
+backend completed-draw boundary and requires a newer draw after each key;
+the gate exercises both normal and fragmented reads. Ten-second deadlines,
+preview/undo, source preservation, terminal restoration and canary assertions
+remain unchanged. This is test synchronization, not a TUI runtime modification;
+new Intel macOS CI must confirm the correction.
+
 Parent QA correction: fake Homebrew failure probes reproduced failed discovery
 proceeding into mutation, partial tap creation being abandoned, and cleanup
 overwriting the original error. Three regression tests (ten failure/existing-state

@@ -17,4 +17,5 @@ python3 scripts/mcp-smoke.py
 python3 scripts/m4-smoke.py
 python3 scripts/m4-smoke.py --read-size 64
 python3 scripts/m5-smoke.py
+python3 scripts/m5-smoke.py --read-size 64
 python3 scripts/m6-smoke.py
