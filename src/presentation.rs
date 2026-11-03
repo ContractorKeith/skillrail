@@ -52,6 +52,14 @@ pub fn details(inventory: &Inventory, selected: usize) -> String {
             safe(item.source.subpath.as_deref().unwrap_or("unknown"))
         ));
     }
+    if let Some(installed) = &item.source.installed {
+        text.push_str(&format!(
+            "Snapshot source: {} | Revision: {}\nInstalled content hash: {}\n",
+            safe(&installed.kind),
+            safe(installed.revision.as_deref().unwrap_or("local snapshot")),
+            safe(&installed.content_hash)
+        ));
+    }
     for occurrence in inventory
         .occurrences
         .iter()

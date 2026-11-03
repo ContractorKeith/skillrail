@@ -110,6 +110,21 @@ fn access_category(error: &std::io::Error) -> &'static str {
 }
 
 pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
+    discover_with_roots(paths, timestamp).0
+}
+/// Explicit evidence for mutation admission; generic coverage_partial is separate.
+pub(crate) struct SkillRootScan {
+    pub agent: Agent,
+    pub scope: Scope,
+    pub path: PathBuf,
+    pub complete: bool,
+    pub absent: bool,
+    pub chain: Option<Vec<crate::guarded_fs::Identity>>,
+}
+pub(crate) fn discover_with_roots(
+    paths: &Paths,
+    timestamp: u64,
+) -> (Inventory, Vec<SkillRootScan>) {
     let mut inventory = Inventory {
         schema_version: crate::SCHEMA_VERSION,
         context: paths.clone(),
@@ -162,19 +177,33 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
         inventory.diagnostics.push(diagnostic("config_unknown", "Codex user configuration could not be safely interpreted; no raw parser or configuration data is retained."));
     }
     let mut seen = BTreeSet::new();
+    let mut root_scans = vec![];
     for (agent, scope, root) in roots {
         // Home can equal project: the same location is not a second installation.
         if !seen.insert((format!("{agent:?}"), root.clone())) {
             continue;
         }
+        let scan = root_scans.len();
+        root_scans.push(SkillRootScan {
+            agent,
+            scope,
+            path: root.clone(),
+            complete: true,
+            absent: false,
+            chain: crate::guarded_fs::Directory::open(&root)
+                .ok()
+                .map(|d| d.chain),
+        });
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
             Err(error)
                 if error.kind() == std::io::ErrorKind::NotFound && confirmed_absent(&root) =>
             {
+                root_scans[scan].absent = true;
                 continue;
             }
             Err(error) => {
+                root_scans[scan].complete = false;
                 inventory.diagnostics.push(located(
                     "A configured skill root is inaccessible or is not a directory.",
                     &root,
@@ -186,7 +215,18 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             }
         };
         let mut children = Vec::new();
-        for entry in entries.take(10_001) {
+        for (count, entry) in entries.take(10_001).enumerate() {
+            if count == 10_000 {
+                root_scans[scan].complete = false;
+                inventory.diagnostics.push(located(
+                    "Skill root exceeds the 10000 entry budget.",
+                    &root,
+                    agent,
+                    scope,
+                    "entry_budget",
+                ));
+                break;
+            }
             match entry {
                 Ok(entry) => children.push(entry.path()),
                 Err(error) => inventory.diagnostics.push(located(
@@ -199,16 +239,6 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             }
         }
         children.sort();
-        if children.len() > 10_000 {
-            inventory.diagnostics.push(located(
-                "Skill root exceeds the 10000 entry budget.",
-                &root,
-                agent,
-                scope,
-                "entry_budget",
-            ));
-            children.truncate(10_000);
-        }
         for original in children {
             if original.to_str().is_none() {
                 inventory.diagnostics.push(located(
@@ -290,7 +320,10 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             let description = metadata.as_ref().and_then(|m| m.description.clone());
             let source = canonical
                 .as_deref()
-                .map(provenance::source)
+                .map(|p| {
+                    crate::mutation::install::owned_source(paths, p)
+                        .unwrap_or_else(|| provenance::source(p))
+                })
                 .unwrap_or_else(|| provenance::unresolved(&original));
             let item_id = format!("skill-{}", source.identity);
             let mut reasons = vec!["Documented standalone discovery location; configured visibility does not prove session loading.".into(), "unknown: managed policy, session flags, custom configuration and trust were not resolved.".into()];
@@ -299,7 +332,11 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             }
             let status = "unknown";
             if agent == Agent::Claude {
-                if fallback.starts_with("anthropic-skills") {
+                if fallback.eq_ignore_ascii_case("anthropic-skills")
+                    || fallback
+                        .to_ascii_lowercase()
+                        .starts_with("anthropic-skills:")
+                {
                     reasons.push("Reserved Claude skill directory name.".into());
                 }
                 if metadata
@@ -413,6 +450,24 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
             });
         }
     }
+    for root in &mut root_scans {
+        if !root.absent {
+            root.complete &= root.chain.is_some()
+                && crate::guarded_fs::Directory::open(&root.path)
+                    .is_ok_and(|d| Some(d.chain) == root.chain);
+        }
+        root.complete &= !inventory.diagnostics.iter().any(|d| {
+            d.code == "discovery_incomplete"
+                && d.location.as_ref().is_some_and(|l| {
+                    l.agent == root.agent && l.scope == root.scope && l.path.starts_with(&root.path)
+                })
+        }) && !inventory.occurrences.iter().any(|o| {
+            o.agent == root.agent
+                && o.scope == root.scope
+                && o.original_path.parent() == Some(root.path.as_path())
+                && (!o.diagnostics.is_empty() || !o.fingerprint.diagnostics.is_empty())
+        });
+    }
     crate::mcp_inventory::discover(paths, &mut inventory);
     let claude_user_names: BTreeSet<String> = inventory
         .occurrences
@@ -471,7 +526,7 @@ pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
     }
     inventory.items.sort_by(|a, b| a.id.cmp(&b.id));
     inventory.occurrences.sort_by(|a, b| a.id.cmp(&b.id));
-    inventory
+    (inventory, root_scans)
 }
 
 pub fn project_ancestors(project: &Path) -> Vec<PathBuf> {
@@ -506,6 +561,9 @@ pub(crate) fn metadata(path: &Path) -> Result<Metadata, ()> {
 }
 pub(crate) fn metadata_with_limit(path: &Path, limit: u64) -> Result<Metadata, ()> {
     let text = files::text(&path.join("SKILL.md"), limit)?;
+    parse_metadata(&text)
+}
+pub(crate) fn parse_metadata(text: &str) -> Result<Metadata, ()> {
     let mut lines = text.lines();
     if lines.next() != Some("---") {
         return Err(());

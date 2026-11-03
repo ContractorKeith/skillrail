@@ -1,5 +1,7 @@
 //! Shared guarded visibility mutations. Public views cannot serialize recovery content.
+pub(crate) mod install;
 mod journal_record;
+pub use crate::install_source::InstallRequest;
 use crate::{
     AppError, Application, Paths, config_patch,
     discovery::{Agent, Scope},
@@ -88,6 +90,8 @@ struct Record {
     requests: Vec<ToggleRequest>,
     changes: Vec<Change>,
     undo_changes: Vec<Change>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    install: Option<install::Install>,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,6 +118,8 @@ pub struct PlanView {
     pub targets: Vec<ToggleRequest>,
     pub files: Vec<PathBuf>,
     pub notes: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) install: Option<install::Manifest>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct FileChangeView {
@@ -140,6 +146,7 @@ pub struct OperationView {
     pub status: String,
     pub targets: Vec<ToggleRequest>,
     pub changed_files: usize,
+    pub action: &'static str,
     pub recovery: &'static str,
 }
 #[derive(Serialize)]
@@ -210,12 +217,12 @@ impl Journal {
                 "Operation ID was not found in this private journal.",
             ))?;
         let record = journal_record::decode(&bytes.bytes)?;
-        if ![1, 2].contains(&record.version)
+        if ![1, 2, 3].contains(&record.version)
             || record.id != id
             || !["prepared", "applied", "undoing", "undone"].contains(&record.status.as_str())
-            || record.changes.is_empty()
+            || (record.install.is_none() && record.changes.is_empty())
             || record.changes.len() > 100
-            || record.requests.is_empty()
+            || (record.install.is_none() && record.requests.is_empty())
             || record.requests.len() > 100
             || record.requests.iter().any(|r| {
                 r.validate().is_err()
@@ -225,9 +232,11 @@ impl Journal {
         {
             return Err(journal_error());
         }
+        install::validate_record(&record)?;
         Ok((record, bytes))
     }
     fn save(&self, record: &Record, expected: Option<&Snapshot>) -> Result<Snapshot, AppError> {
+        install::validate_record(record)?;
         self.check()?;
         let name = format!("{}.json", record.id);
         if self.dir.read(&name, true)?.as_ref() != expected {
@@ -569,6 +578,7 @@ impl Application {
             requests: normalized,
             changes,
             undo_changes: vec![],
+            install: None,
         };
         journal_record::admit(&record)?;
         make_plan(record, false, None, inventory_revision, preconditions)
@@ -585,7 +595,7 @@ impl Application {
             Ok(_) => {}
         }
         let j = Journal::open(&self.paths)?;
-        let operations = j.records()?.into_iter().map(|r| OperationView { operation_id: r.id, status: r.status.clone(), targets: r.requests, changed_files: r.changes.len(), recovery: if r.status == "prepared" || r.status == "undoing" { "Interrupted operation: preview undo to restore only matching published files; resolve conflicts manually without deleting the journal." } else { "Undo requires exact postconditions; intervening edits are preserved." } }).collect();
+        let operations = j.records()?.into_iter().map(|r| OperationView { operation_id: r.id, status: r.status.clone(), targets: r.requests, changed_files: r.install.as_ref().map_or(r.changes.len(), |i| i.created_count()), action: if r.install.is_some() { "install" } else { "toggle" }, recovery: if r.status == "prepared" || r.status == "undoing" { "Interrupted operation: preview undo to restore only matching published files; resolve conflicts manually without deleting the journal." } else { "Undo requires exact postconditions; intervening edits are preserved." } }).collect();
         Ok(History {
             schema_version: 1,
             operations,
@@ -604,6 +614,10 @@ impl Application {
             return Err(refused(
                 "Operation belongs to another home/project context; use its original explicit paths.",
             ));
+        }
+        if r.install.is_some() {
+            install::validate_undo(self, &r)?;
+            return install::plan(r, true, Some(before));
         }
         if r.status != "undone" {
             // Validate the complete set before restoring any file.
@@ -654,6 +668,9 @@ impl Application {
     ) -> Result<PlanView, AppError> {
         if plan.record.context != Context::from(&self.paths) {
             return Err(refused("Plan belongs to another application context."));
+        }
+        if plan.record.install.is_some() {
+            return install::apply(self, plan, checkpoint);
         }
         let mut view = plan.view.clone();
         if plan.record.changes.is_empty() || (plan.undo && plan.record.status == "undone") {
@@ -912,6 +929,7 @@ pub enum Checkpoint {
     Staged(usize),
     Published(usize),
     BeforePublish(usize),
+    TreeFile(usize),
 }
 fn make_plan(
     record: Record,
@@ -956,6 +974,7 @@ fn make_plan(
         operation_id: record.id.clone(),
         token: crate::files::id(&[&encoded]),
         targets: record.requests.clone(),
+        install: None,
         files: record.changes.iter().map(|c| c.path.clone()).collect(),
         notes: vec![
             "Configuration changes only; runtime loading, trust, managed policy and session overrides remain unresolved.",

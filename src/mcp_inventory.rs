@@ -287,6 +287,7 @@ pub(super) fn add_server(
         evidence: "configuration_occurrence_only; equal server names never establish shared endpoint identity",
         repository: None,
         subpath: None,
+        installed: None,
         owner: if plugin.is_some() {
             "native_plugin"
         } else {

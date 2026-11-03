@@ -1732,11 +1732,15 @@ fn mixed_toml_line_endings_refuse_without_rewriting_literal_content() {
 }
 #[test]
 fn sequential_history_undo_keeps_strict_external_identity_preconditions() {
+    use std::os::unix::fs::MetadataExt;
     let f = Fixture::new();
     let id = f.occurrence("mcp");
     let a = json(f.run(&[
         "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
     ]));
+    // Keep A's inode allocated: a filesystem may otherwise recycle its number
+    // during B's undo, which would not exercise a changed-identity conflict.
+    let published = fs::File::open(f.path("home/.codex/config.toml")).unwrap();
     let b = json(f.run(&[
         "enable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
     ]));
@@ -1747,6 +1751,12 @@ fn sequential_history_undo_keeps_strict_external_identity_preconditions() {
         "--json",
     ]));
     let before = bytes(&f.path("home/.codex/config.toml"));
+    assert_ne!(
+        published.metadata().unwrap().ino(),
+        fs::metadata(f.path("home/.codex/config.toml"))
+            .unwrap()
+            .ino()
+    );
     let result = f.run(&[
         "undo",
         a["operation_id"].as_str().unwrap(),
@@ -1755,6 +1765,7 @@ fn sequential_history_undo_keeps_strict_external_identity_preconditions() {
     ]);
     assert_eq!(result.status.code(), Some(4));
     assert_eq!(bytes(&f.path("home/.codex/config.toml")), before);
+    drop(published);
 }
 
 #[test]

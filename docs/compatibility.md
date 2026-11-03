@@ -125,7 +125,10 @@ External repository/unknown ownership never transfers to Skillrail.
 ## Metadata and fingerprints
 
 `SKILL.md` must be a regular, UTF-8 file of at most 64 KiB, with YAML frontmatter.
-Claude can fall back to the folder name; Codex requires name and description.
+Inventory falls back to the folder name for Claude; Skillrail conservatively
+requires explicit name/description for Codex inventory and owned installs. The
+pinned native Codex parser below can derive a default name: the explicit-name
+requirement is an application limit, not a native limitation.
 Names use the conservative ASCII alphanumeric/underscore/hyphen subset (128
 bytes); descriptions have a 4096-byte limit. Unsupported metadata stays a row
 with diagnostics. Unknown YAML keys are ignored, not executed. Skill bodies,
@@ -566,3 +569,127 @@ stage control proves the interposer fires, while recorded stages survive retries
 The Linux test requires the existing C compiler prerequisite; portable stage
 recovery tests remain active on macOS. Sequential historical undo remains
 conservative, with explicit byte-preservation/conflict coverage.
+
+
+## M5 owned install evidence and limits
+
+Linux x86_64 fixtures exercise local directories and local Git object repositories,
+exact commit/subpath manifests, immutable copies, selected Claude/Codex user/project
+links, explicit selection, offline inventory provenance, credential-URL refusals,
+collisions/aliases, executable/binary/empty-directory preservation and guarded
+recovery. A Linux `write` interposer terminates an actual process halfway through
+snapshot staging; durable undo removes only its matching prefix. Typed checkpoints
+cover tree/link publication, boundary substitutions and interrupted/repeated undo.
+The real PTY smoke covers source and explicit selection, form/preview cancellation,
+apply, history, undo cancellation/application and terminal restoration.
+
+The [CLI install contract](CLI.md#owned-snapshot-installation) lists exact syntax,
+selected-tree budgets, ASCII-only names, selected-tree-symlink refusal, local ordinary/bare
+Git support and credential-free HTTPS-only remote support. Git plumbing runs in
+private bare metadata; source configuration, hooks, filters and scripts are not
+executed. Inventory remains offline with five unchanged read-only MCP tools.
+`source.installed` exposes validated snapshot provenance; it does not serve bodies
+or claim native session loading. Existing owners are never adopted by name/hash.
+
+The user source store is `<home>/.skillrail-sources` on both platforms. Recovery
+uses the existing private journal/lock with additive schema 3; schema 1/2 remain
+readable. Empty created parent directories remain after undo. Unknown discovered
+consumers in the selected context prevent undo; references outside that inventory
+are not discoverable guarantees. Native agent location evidence remains the M1/M4
+pinned evidence above, without new claims about live-session loading.
+
+Local execution is Linux only. macOS build/acceptance, APFS case/normalization,
+Darwin link-stat/ACL/exclusive-rename behavior, real credential-free HTTPS fetches,
+and disposable native agent sessions remain unverified integration/release checks.
+No tests contact real network repositories. HTTPS needs `/usr/bin/git`, its HTTPS
+transport/TLS trust and network access, plus absence of implicit netrc files in
+the OS account home. Netrc metadata is checked without reading credential values;
+HOME/CODEX_HOME are never overridden. No authentication helper or redirect
+fallback is provided. Independent Standards/Spec review and adversarial QA belong
+to the parent before ready/merge; this implementation run does not certify them.
+
+
+### Simultaneous resize/input readiness correction
+
+At M5 head `2243862`, one macOS CI job timed out in the first PTY smoke's quit
+wait while its sibling run passed. The log did not capture the event ordering.
+Linux reproduced the exact timeout with a syscall scheduling probe that coalesced
+real SIGWINCH/input readiness and returned the resize notification first. In
+Crossterm 0.29's default Mio reader, `try_read` returns a Resize event from inside
+the readiness loop, discarding the remaining terminal readiness notification.
+With edge-triggered polling the unread quit byte can then remain stranded.
+Output draining does not fix a lost input notification.
+
+Skillrail enables Crossterm's supported `use-dev-tty` feature, selecting its
+level-triggered Unix poll reader. Unread descriptors remain ready on the next
+poll. This uses already-locked `filedescriptor 0.8.3`; it adds no package/version
+and avoids maintaining a custom input parser or dependency-source patch.
+The standard PTY driver additionally sends resize immediately before quit on
+both platforms. `scripts/pty-readiness-smoke.py` uses the existing C compiler
+prerequisite on Linux to force simultaneous real readiness through the same
+application/PTY path. It verifies the control actually fired and terminal
+attributes/alternate screen restored after a single quit. Re-enabling the default
+reader is a negative control reproducing the original ten-second timeout; the
+level-triggered reader passes. Deadlines are unchanged.
+
+This establishes a real event-reader defect consistent with the CI symptom,
+not proof of the failed macOS job's exact event order. macOS execution of this
+follow-up remains CI evidence; the Linux syscall interposer is explicitly
+platform-specific and the ordinary resize/input smoke runs on both platforms.
+
+
+The M5 follow-up also caps local Git metadata cumulatively at 10000 entries
+across objects/refs recursion and HEAD/packed-refs, charging directories/files
+before copying and including HEAD/packed-refs bytes in the 64 MiB budget. The
+parent's failing-first fixture used 10302 empty directories to prove that
+per-directory limits alone did not bound work. Combined Linux acceptance passed 135 Rust tests, strict fmt/Clippy, existing
+smokes and the additional portable/deterministic resize-input PTY regressions.
+
+
+### M5 Spec/QA corrections
+
+Explicit local/Git subpath resolution now precedes content budgets and path
+validation. Separate bounded candidate discovery reads names/tree records only;
+metadata acquisition retains the parent's cumulative 10000-entry/64 MiB bounds.
+Fixtures install a selected skill beside unrelated 530000-byte files, Unicode
+assets, internal links and plugin manifests. Selected content and ancestors keep
+the existing no-follow/owner/ACL/containment rules. Selected Git trees reject
+malformed paths, duplicate entries, inconsistent types, prefix/case collisions
+before preview; generated recovery records validate before the first journal
+save. Malformed unrelated Git subtrees do not invalidate explicit valid selection.
+
+Codex metadata evidence is the exact [native parser at
+6ff1e1ca3b30fc8b914720681fcf5fe62e95f856](https://github.com/openai/codex/blob/6ff1e1ca3b30fc8b914720681fcf5fe62e95f856/codex-rs/skills/src/parser.rs),
+SHA-256 `f3532df1cc16f4da423b8e5c813269940c90317bcd211b6659cad449fd877e89`.
+Its name limit is 64 characters; it normalizes whitespace and requires a nonempty
+description, and parses optional metadata as a mapping with optional string
+short-description. Install validation uses each selected adapter's constraints;
+dual-agent selection takes their intersection. Inventory's broader diagnostic
+parser and its 128-byte conservative name budget are not native install admission.
+An optional `TMPDIR=/home/contractorkeith/.cache/s5 python3 scripts/install-evidence.py`
+passed exact extracted `validate_len`/`sanitize_single_line` functions with 64/65,
+empty/whitespace and removed-limit negative controls. It requires rustc, Python 3
+and access to the pinned raw source; it is outside offline acceptance. This is
+source/function evidence, not full native YAML/discovery or session-loading proof.
+
+The [official Claude skills documentation](https://code.claude.com/docs/en/skills#where-skills-live)
+reserves the `synced` folder in any capitalization. Its [synced namespace
+rules](https://code.claude.com/docs/en/skills#names-reserved-for-synced-skills)
+reserve exact `anthropic-skills` and its colon namespace, not the benign
+`anthropic-skills-helper` prefix. These reservations apply only when Claude is
+selected; Codex-only fixtures prove those names remain available. Colon names
+are separately outside Skillrail's conservative grammar. No native session was
+launched to infer these rules.
+
+Mutation admission now retains explicit completeness and directory identity for
+each supported skill root. Consumer checks require both agents' selected-context
+roots, while collision checks require only selected agents' roots. Root errors,
+unsafe aliases, unsupported/malformed candidates, 10000-entry truncation and
+relevant plugin/fallback incompleteness refuse rather than establish absence.
+The generic known `coverage_partial` diagnostic remains distinct. Destination
+case enumeration rejects overflow and reserves its stage/link capacity; native
+name/case checks repeat at publication, and the published snapshot is rechecked
+before links. Regressions preserve snapshots/unknown aliases under budget,
+permission and malformed-root failures, and preserve late external case/native
+collisions. References outside the supported inventory context remain outside
+these guarantees; same-user syscall races and storage limits remain unchanged.

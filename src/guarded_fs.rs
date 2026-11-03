@@ -158,6 +158,71 @@ impl Directory {
             bytes,
         }))
     }
+    #[allow(
+        clippy::unnecessary_cast,
+        reason = "Darwin stat field widths differ from Linux"
+    )]
+    pub(crate) fn link(&self, name: &str) -> Result<Option<Snapshot>, AppError> {
+        let name = cstr(name.as_ref())?;
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: live fd, valid component and writable stat storage; no link traversal.
+        if unsafe {
+            libc::fstatat(
+                self.file.as_raw_fd(),
+                name.as_ptr(),
+                stat.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } < 0
+        {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+                return Ok(None);
+            }
+            return Err(unsafe_path());
+        }
+        // SAFETY: successful fstatat initialized stat.
+        let stat = unsafe { stat.assume_init() };
+        // SAFETY: geteuid has no pointer requirements.
+        if stat.st_mode & libc::S_IFMT != libc::S_IFLNK
+            || stat.st_uid != unsafe { libc::geteuid() }
+            || stat.st_nlink != 1
+        {
+            return Err(unsafe_path());
+        }
+        let mut bytes = vec![0u8; 4096];
+        // SAFETY: live fd/name and writable bounded buffer.
+        let n = unsafe {
+            libc::readlinkat(
+                self.file.as_raw_fd(),
+                name.as_ptr(),
+                bytes.as_mut_ptr().cast(),
+                bytes.len(),
+            )
+        };
+        if n < 0 || n as usize == bytes.len() {
+            return Err(unsafe_path());
+        }
+        bytes.truncate(n as usize);
+        Ok(Some(Snapshot {
+            identity: Identity {
+                dev: stat.st_dev as u64,
+                ino: stat.st_ino as u64,
+                mode: stat.st_mode as u32,
+                uid: stat.st_uid,
+                gid: stat.st_gid,
+            },
+            bytes,
+        }))
+    }
+    pub(crate) fn symlink(&self, name: &str, target: &Path) -> Result<(), AppError> {
+        let name = cstr(name.as_ref())?;
+        let target = cstr(target.as_os_str())?;
+        // SAFETY: fd and NUL-terminated target/name remain valid; symlinkat never overwrites.
+        if unsafe { libc::symlinkat(target.as_ptr(), self.file.as_raw_fd(), name.as_ptr()) } < 0 {
+            return Err(unsafe_path());
+        }
+        self.sync()
+    }
     pub(crate) fn create(
         &self,
         name: &str,

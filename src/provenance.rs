@@ -10,6 +10,8 @@ pub struct Source {
     pub repository: Option<String>,
     pub subpath: Option<String>,
     pub owner: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed: Option<crate::install_source::Provenance>,
 }
 
 pub fn unresolved(path: &Path) -> Source {
@@ -18,6 +20,7 @@ pub fn unresolved(path: &Path) -> Source {
         evidence: "unresolved_target",
         repository: None,
         subpath: None,
+        installed: None,
         owner: "external_unknown",
     }
 }
@@ -40,6 +43,7 @@ pub fn source(path: &Path) -> Source {
                 evidence: "local_git_origin_and_subpath (declared, not authenticated)",
                 repository: Some(remote),
                 subpath: Some(subpath.into()),
+                installed: None,
                 owner: "external_repository",
             };
         }
@@ -48,6 +52,7 @@ pub fn source(path: &Path) -> Source {
             evidence: "canonical_target; Git metadata unsupported, unavailable or unsafe",
             repository: None,
             subpath: subpath.map(str::to_owned),
+            installed: None,
             owner: "external_unknown",
         };
     }
@@ -56,6 +61,7 @@ pub fn source(path: &Path) -> Source {
         evidence: "canonical_target_only",
         repository: None,
         subpath: None,
+        installed: None,
         owner: "external_unknown",
     }
 }
@@ -132,7 +138,7 @@ fn origin(config: &str) -> Option<String> {
 }
 
 // Reject rather than redact credential-bearing or ambiguous URLs. No arbitrary URL fields escape.
-fn safe_remote(value: &str) -> Option<String> {
+pub(crate) fn safe_remote(value: &str) -> Option<String> {
     let rest = value.strip_prefix("https://")?;
     let (host, path) = rest.split_once('/')?;
     if host.is_empty()

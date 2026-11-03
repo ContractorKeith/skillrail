@@ -120,6 +120,7 @@ pub enum Action {
     Quit,
     Toggle(bool),
     History,
+    Install,
 }
 impl View {
     pub fn handle(&mut self, event: &Event, inventory: &Inventory) -> Action {
@@ -185,6 +186,7 @@ impl View {
             KeyCode::Char('e') => return Action::Toggle(true),
             KeyCode::Char('b') => return Action::Toggle(false),
             KeyCode::Char('h') => return Action::History,
+            KeyCode::Char('i') => return Action::Install,
             KeyCode::Char('r') => return Action::Refresh,
             KeyCode::Char('x') => {
                 self.query = crate::query::Query::default();
@@ -206,7 +208,7 @@ impl View {
             .copied()
             .unwrap_or(usize::MAX);
         let header = format!(
-            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {} | e: enable  b: disable  h: history\n",
+            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {} | e: enable  b: disable  h: history  i: install\n",
             crate::presentation::safe(self.query.query.as_deref().unwrap_or("")),
             if self.editing { "_" } else { "" },
             self.query.kind.as_deref().unwrap_or("all"),
@@ -290,6 +292,7 @@ pub fn run(application: &Application) -> Result<(), AppError> {
             Action::Continue => {}
             Action::Toggle(enabled) => mutations.toggle(enabled, &view, &inventory),
             Action::History => mutations.history(application),
+            Action::Install => mutations.install(),
         }
         // Resize and other events redraw on the next iteration.
     }
@@ -306,12 +309,48 @@ pub struct MutationUi {
 enum MutationScreen {
     #[default]
     Closed,
+    Install(InstallForm),
     Picker(Vec<(crate::mutation::ToggleRequest, String)>),
     Preview(Box<crate::mutation::Plan>),
     History(crate::mutation::History),
     Message(String),
 }
+struct InstallForm {
+    fields: [String; 6],
+    selected: usize,
+}
+impl Default for InstallForm {
+    fn default() -> Self {
+        Self {
+            fields: [
+                String::new(),
+                "local".into(),
+                String::new(),
+                String::new(),
+                "codex".into(),
+                "user".into(),
+            ],
+            selected: 0,
+        }
+    }
+}
+impl InstallForm {
+    fn request(&self) -> crate::mutation::InstallRequest {
+        crate::mutation::InstallRequest {
+            source: self.fields[0].clone(),
+            git: self.fields[1] == "git",
+            revision: (!self.fields[2].is_empty()).then(|| self.fields[2].clone()),
+            skill: (!self.fields[3].is_empty()).then(|| self.fields[3].clone()),
+            agents: self.fields[4].split(',').map(str::to_owned).collect(),
+            scope: self.fields[5].clone(),
+        }
+    }
+}
 impl MutationUi {
+    pub fn install(&mut self) {
+        self.screen = MutationScreen::Install(InstallForm::default());
+        self.scroll = 0;
+    }
     pub fn active(&self) -> bool {
         !matches!(self.screen, MutationScreen::Closed)
     }
@@ -385,6 +424,35 @@ impl MutationUi {
         if key.kind != KeyEventKind::Press {
             return true;
         }
+        if let MutationScreen::Install(form) = &mut self.screen {
+            match key.code {
+                KeyCode::Esc => self.screen = MutationScreen::Closed,
+                KeyCode::BackTab | KeyCode::Up => form.selected = form.selected.saturating_sub(1),
+                KeyCode::Tab | KeyCode::Down => form.selected = (form.selected + 1).min(5),
+                KeyCode::Backspace => {
+                    form.fields[form.selected].pop();
+                }
+                KeyCode::Char(c) if !c.is_control() => {
+                    if form.fields[form.selected].len() + c.len_utf8() <= 4096 {
+                        form.fields[form.selected].push(c);
+                    }
+                }
+                KeyCode::Enter if form.selected < 5 => form.selected += 1,
+                KeyCode::Enter => {
+                    if !["local", "git"].contains(&form.fields[1].as_str()) {
+                        self.screen =
+                            MutationScreen::Message("Source kind must be local or git.".into());
+                    } else {
+                        self.screen = match application.plan_install(form.request()) {
+                            Ok(plan) => MutationScreen::Preview(Box::new(plan)),
+                            Err(e) => MutationScreen::Message(e.to_string()),
+                        };
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
         if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') {
             self.screen = MutationScreen::Closed;
             return true;
@@ -447,6 +515,33 @@ impl MutationUi {
     pub fn render(&self, frame: &mut Frame<'_>) {
         let text = match &self.screen {
             MutationScreen::Closed => String::new(),
+            MutationScreen::Install(form) => {
+                let labels = [
+                    "Source (path or HTTPS; input hidden)",
+                    "Kind: local|git",
+                    "Git ref (blank = HEAD)",
+                    "Skill subpath (blank = sole skill)",
+                    "Agents: claude,codex",
+                    "Scope: user|project",
+                ];
+                let mut text = String::from(
+                    "Install snapshot | Enter/Tab: next | Up: previous | Backspace: edit | Esc: cancel\nOn Scope: Enter previews; a separate confirmation applies.\n",
+                );
+                for (n, label) in labels.iter().enumerate() {
+                    let value = if n == 0 && !form.fields[n].is_empty() {
+                        "<source entered>"
+                    } else {
+                        &form.fields[n]
+                    };
+                    text.push_str(&format!(
+                        "{} {}: {}\n",
+                        if form.selected == n { ">" } else { " " },
+                        label,
+                        value
+                    ));
+                }
+                text
+            }
             MutationScreen::Picker(choices) => {
                 let selected = self.selected.min(choices.len().saturating_sub(1));
                 let mut text = String::from(

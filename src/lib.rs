@@ -4,6 +4,7 @@ pub mod discovery;
 mod files;
 mod fingerprint;
 mod guarded_fs;
+pub mod install_source;
 pub mod installations;
 mod json_config;
 pub mod layers;

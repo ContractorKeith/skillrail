@@ -64,6 +64,8 @@ enum Commands {
     },
     /// Preview enabling a supported occurrence; writes only with --apply.
     Enable(ToggleArgs),
+    /// Preview an owned snapshot and selected links; writes only with --apply.
+    Install(InstallArgs),
     /// Preview disabling a supported occurrence; writes only with --apply.
     Disable(ToggleArgs),
     /// List sanitized durable operation history (independent of the cache).
@@ -83,6 +85,29 @@ enum Commands {
     Mcp,
 }
 
+#[derive(clap::Args)]
+struct InstallArgs {
+    source: String,
+    /// Treat source as an explicit Git repository (local path or credential-free HTTPS URL).
+    #[arg(long)]
+    git: bool,
+    /// Git branch, tag or exact commit (default HEAD).
+    #[arg(long = "ref", requires = "git")]
+    revision: Option<String>,
+    /// Exact repository-relative skill directory; required when several skills exist.
+    #[arg(long)]
+    skill: Option<String>,
+    #[arg(long, required = true, value_parser = ["claude", "codex"], action = clap::ArgAction::Append)]
+    agent: Vec<String>,
+    #[arg(long, value_parser = ["user", "project"])]
+    scope: String,
+    #[arg(long)]
+    apply: bool,
+    #[arg(long)]
+    json: bool,
+    #[arg(long)]
+    expect: Option<String>,
+}
 #[derive(clap::Args)]
 struct ToggleArgs {
     /// Stable item or exact occurrence ID from scan/show.
@@ -148,6 +173,7 @@ fn main() -> std::process::ExitCode {
                 | Commands::Search { json: true, .. }
                 | Commands::Show { json: true, .. }
                 | Commands::Drift { json: true, .. }
+                | Commands::Install(InstallArgs { json: true, .. })
                 | Commands::Enable(ToggleArgs { json: true, .. })
                 | Commands::Disable(ToggleArgs { json: true, .. })
                 | Commands::Operations { json: true }
@@ -180,7 +206,32 @@ fn main() -> std::process::ExitCode {
         }
         let paths = skillrail::Paths::resolve(cli.home, cli.project, cli.state_dir)?;
         let application = skillrail::Application::new(paths);
-        if let Some(Commands::Enable(args) | Commands::Disable(args)) = &cli.command {
+        if let Some(Commands::Install(args)) = &cli.command {
+            let plan = application.plan_install(skillrail::mutation::InstallRequest {
+                source: args.source.clone(),
+                git: args.git,
+                revision: args.revision.clone(),
+                skill: args.skill.clone(),
+                agents: args.agent.clone(),
+                scope: args.scope.clone(),
+            })?;
+            if args
+                .expect
+                .as_ref()
+                .is_some_and(|t| t != &plan.view().token)
+            {
+                return Err(skillrail::AppError::new(
+                    "mutation_conflict",
+                    "Preview changed; inspect a fresh preview before applying.",
+                ));
+            }
+            let result = if args.apply {
+                application.apply(&plan)?
+            } else {
+                plan.view().clone()
+            };
+            mutation_output(&result, json)?;
+        } else if let Some(Commands::Enable(args) | Commands::Disable(args)) = &cli.command {
             let plan = application.plan_toggle(skillrail::mutation::ToggleRequest {
                 id: args.id.clone(),
                 agent: args.agent.clone(),
