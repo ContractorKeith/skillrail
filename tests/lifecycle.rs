@@ -119,11 +119,18 @@ fn lifecycle_plans_refuse_another_journal_before_any_mutation() {
                 // Preserve private modes while reproducing an ordinary copied journal.
                 let status = Command::new("cp")
                     .args(["-Rp"])
-                    .arg(f.path("state"))
-                    .arg(f.path("other-state"))
+                    .arg(f.path("state/journal"))
+                    .arg(f.path("other-state/journal"))
                     .status()
                     .unwrap();
                 assert!(status.success());
+                assert!(
+                    f.path(&format!(
+                        "other-state/journal/{}.json",
+                        install.view().operation_id
+                    ))
+                    .is_file()
+                );
                 let result = if update {
                     b.plan_update(owned)
                 } else {
