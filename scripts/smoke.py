@@ -12,9 +12,20 @@ import signal
 import sqlite3
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
+
+
+def terminal_attributes_equal(before, after):
+    # Darwin sets PENDIN when restoring canonical mode, even with tcsetattr
+    # given the exact saved attributes. It is transient pending-input state.
+    before, after = before[:], after[:]
+    if sys.platform == "darwin":
+        before[3] &= ~termios.PENDIN
+        after[3] &= ~termios.PENDIN
+    return before == after
 
 
 def command(binary, root):
@@ -93,6 +104,7 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
             assert process.poll() is None, f"TUI exited before rendering: {output!r}"
             if select.select([master], [], [], 0.1)[0]:
                 output.extend(os.read(master, 65536))
+        running_attributes = termios.tcgetattr(slave)
         if fail_refresh:
             with sqlite3.connect(root / "state/index.sqlite3") as connection:
                 connection.execute("PRAGMA user_version = 999")
@@ -147,7 +159,8 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
         assert process.returncode == (1 if fail_refresh else 0)
         while select.select([master], [], [], 0)[0]:
             output.extend(os.read(master, 65536))
-        assert termios.tcgetattr(slave) == original, "terminal attributes were not restored"
+        restored = termios.tcgetattr(slave)
+        assert terminal_attributes_equal(original, restored), f"before={original!r}; running={running_attributes!r}; after={restored!r}; output={bytes(output)!r}"
         assert b"\x1b[?1049h" in output and b"\x1b[?1049l" in output, "alternate screen not restored"
         if fail_refresh:
             assert b"index_version_unsupported" in output

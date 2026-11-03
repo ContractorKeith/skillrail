@@ -7,6 +7,7 @@ cargo clippy --locked --all-targets -- -D warnings
 # Includes the official rmcp client initialize/list/every-read-tool integration.
 cargo test --locked
 cargo build --locked
+python3 scripts/test_terminal_attributes.py
 python3 scripts/smoke.py
 python3 scripts/pty-readiness-smoke.py
 python3 scripts/mcp-smoke.py

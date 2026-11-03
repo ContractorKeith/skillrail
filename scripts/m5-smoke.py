@@ -13,7 +13,7 @@ import termios
 import time
 import sys
 sys.dont_write_bytecode = True
-from smoke import command, screen_text
+from smoke import command, screen_text, terminal_attributes_equal
 
 
 def main():
@@ -92,7 +92,8 @@ def main():
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
             assert process.returncode == 0
-            assert termios.tcgetattr(slave) == original_terminal
+            restored = termios.tcgetattr(slave)
+            assert terminal_attributes_equal(original_terminal, restored), f"before={original_terminal!r}; after={restored!r}"
             assert b"\x1b[?1049h" in output and b"\x1b[?1049l" in output
             assert b"PRIVATE_PTY_CANARY" not in output
             print("M5 PTY: source/explicit selection/cancel/preview/apply/history/undo/cancel/restoration and body canary passed")

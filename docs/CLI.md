@@ -220,6 +220,8 @@ attempt terminal restoration; Ratatui also installs its panic restoration hook.
 Uncatchable process termination cannot run cleanup. PTY smokes verify restored
 terminal attributes and alternate-screen exit on quit and a refresh error,
 including backpressured redraws with output drained during the exit wait.
+On Darwin these comparisons exclude only `PENDIN`, transient pending-input state
+that the OS can set when restoring canonical mode; all other attributes must match.
 
 ## Shared queries and pagination
 
