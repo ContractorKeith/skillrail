@@ -1,4 +1,10 @@
-# Agent inventory compatibility (M1–M2)
+# Agent inventory compatibility (v0.1.0 candidate)
+
+Current M7 native/platform/HTTPS/artifact evidence and pending gates are in
+[the release ledger](release-evidence.md). The dated milestone sections below
+retain their original scope; source probes do not establish live-session loading.
+No custom native homes, managed policy, profile/session precedence, legacy roots,
+other agents or MCP health claims were added by release packaging.
 
 Evidence checked 2026-11-02 on Linux x86_64, Rust 1.98.1:
 `claude --version` → `2.1.309 (Claude Code)`;
@@ -739,8 +745,10 @@ evidence. Fixture corrections (creating a hooks directory after Git `--template=
 and choosing the actual serialized capacity boundary) are likewise not product
 regressions.
 
-Linux acceptance passes 165 Rust tests (148 inherited plus 17 lifecycle tests)
-and three Python terminal-comparison tests.
+The M6 implementation run passed 165 Rust tests (148 inherited plus 17 lifecycle
+tests) and three Python terminal-comparison tests. The supplied final M6 baseline
+passed 166 Rust tests after the complete-draw synchronization correction; the
+current M7 Linux rerun is recorded in the release ledger.
 The shared gate retains inherited fmt/Clippy/Rust/Python/CLI/MCP/M4/M5 PTY and
 simultaneous resize/input checks, and includes `scripts/m6-smoke.py`: fresh
 public CLI local/Git update/no-op/uninstall/undo and refusal controls, plus real

@@ -39,7 +39,7 @@ fn version_help_and_invalid_arguments_are_executable() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "skillrail 0.1.0-dev"
+        concat!("skillrail ", env!("CARGO_PKG_VERSION"))
     );
     let help = fixture.run(&["--help"]);
     assert!(help.status.success());

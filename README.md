@@ -1,6 +1,6 @@
 # skillrail
 
-A local-first skill and MCP registry for Claude Code and Codex. Planned v1
+A local-first skill and MCP registry for Claude Code and Codex. The v0.1.0 release candidate
 explains provenance, configured visibility and local drift, with deliberate,
 recoverable changes. See [the build plan](docs/PLAN.md) for scope and acceptance.
 
@@ -22,9 +22,26 @@ pinned native resolver ignores project skill rules. New snapshots live in
 [Install semantics and limits](docs/CLI.md#owned-snapshot-installation) include
 explicit selection, HTTPS-only remote support and conservative source guards.
 
+## Install the candidate
+
+From this reviewed checkout, with Rust 1.98.1 and a C compiler:
+
+```sh
+cargo install --locked --path .
+skillrail version  # skillrail 0.1.0
+```
+
+Packaging for four native Linux/macOS x86_64/arm64 archives and a checksum-bound
+Homebrew formula is prepared by [the release procedure](docs/RELEASE.md). This branch
+has not published a release or tap formula. Use the [evidence ledger](docs/release-evidence.md)
+for observed checks and remaining gates. After publication, source installation
+from the exact release is `cargo install --locked --git https://github.com/ContractorKeith/skillrail --tag v0.1.0`;
+the planned tap command is `brew install ContractorKeith/tap/skillrail`.
+Neither command implies that unpublished assets already exist.
+
 ## Run
 
-Build with stable Rust and a C compiler (SQLite is bundled):
+Build with Rust 1.98.1 and a C compiler (SQLite is bundled):
 
 ```bash
 cargo build --locked
@@ -67,8 +84,8 @@ JSON, pagination, errors, protocol limits and Claude Code/Codex setup examples.
 
 ## Development
 
-Run `bash scripts/accept.sh` with stable Rust, rustfmt, Clippy, a C compiler and
-Python 3. It checks formatting, strict Clippy, locked tests/build, isolated CLI
+Run `bash scripts/accept.sh` with Rust 1.98.1, rustfmt, Clippy, a C compiler and
+Python >=3.11. It checks formatting, strict Clippy, locked tests/build, isolated CLI
 scan/list and cache rebuild, plus PTY terminal restoration on quit and refresh
 error, search-to-detail, refresh and resize. The official Rust MCP SDK client
 initializes, lists and calls every read tool; raw stdio probes cover negotiation,
@@ -83,7 +100,9 @@ retention, precise inode restoration, partial-write/publication process deaths,
 consumer/budget/conflict regressions and a real CLI/TUI lifecycle smoke.
 [Lifecycle and recovery limits](docs/CLI.md#owned-update-and-uninstall) describe
 payload-free diffs and private backup retention.
-Linux and macOS GitHub Actions run this exact script. Platform CI results and
+The gate also exercises artifact checksums, deterministic archive envelopes,
+platform/version refusal and Homebrew validation cleanup through a fake package
+manager boundary. Linux and macOS GitHub Actions run this exact script. Platform CI results and
 independent review must be checked on the PR; local Linux success is not macOS
 evidence. Disposable native Claude installation evidence is recorded; broader
 agent loading verification remains pending.
