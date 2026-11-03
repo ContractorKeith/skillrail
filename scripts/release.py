@@ -102,22 +102,61 @@ def package(binary, output, target, version, epoch):
 
 
 def verify(archive, run=False):
-    """Check integrity against the adjacent checksum; reject unsafe/extra members."""
-    raw = archive.read_bytes()
-    expected = f"{digest(raw)}  {archive.name}\n"
-    if archive.with_suffix(archive.suffix + ".sha256").read_text() != expected:
-        raise ValueError("archive checksum mismatch")
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-        members = tar.getmembers()
-        names = [m.name for m in members]
-        if sorted(names) != ["BUILD.json", "LICENSE", "SHA256SUMS", "skillrail"] or any(not m.isfile() or m.size > 100 * 1024 * 1024 for m in members):
-            raise ValueError("unexpected archive members")
-        files = {m.name: tar.extractfile(m).read() for m in members}
-        if files["SHA256SUMS"].decode() != "".join(f"{digest(files[n])}  {n}\n" for n in sorted(files) if n != "SHA256SUMS"):
-            raise ValueError("member checksum mismatch")
-        if next(m.mode for m in members if m.name == "skillrail") != 0o755:
-            raise ValueError("binary is not executable")
+    """Verify bounded USTAR records before reading any declared payload."""
+    limits = {"skillrail": 100 * 1024 * 1024, "BUILD.json": 65536,
+              "LICENSE": 65536, "SHA256SUMS": 65536}
+    files = {}
+    with archive.open("rb") as raw:
+        checksum = hashlib.sha256()
+        compressed_size = 0
+        while chunk := raw.read(65536):
+            compressed_size += len(chunk)
+            if compressed_size > 101 * 1024 * 1024:
+                raise ValueError("compressed archive exceeds budget")
+            checksum.update(chunk)
+        expected = f"{checksum.hexdigest()}  {archive.name}\n".encode()
+        with archive.with_suffix(archive.suffix + ".sha256").open("rb") as sidecar:
+            if sidecar.read(1025) != expected:
+                raise ValueError("archive checksum mismatch")
+        raw.seek(0)
+        with gzip.GzipFile(fileobj=raw, mode="rb") as zipped:
+            # TarFile.getmembers follows PAX/GNU extensions before returning a
+            # member. Parse fixed headers only; our generator emits plain USTAR.
+            for _ in range(5):
+                header = zipped.read(512)
+                if header == bytes(512):
+                    tail = zipped.read(10241)
+                    if len(tail) < 512 or len(tail) > 10240 or any(tail):
+                        raise ValueError("invalid archive end padding")
+                    break
+                if len(header) != 512 or header[257:263] != b"ustar\0":
+                    raise ValueError("expected a USTAR header")
+                try:
+                    member = tarfile.TarInfo.frombuf(header, "utf-8", "strict")
+                except tarfile.HeaderError as error:
+                    raise ValueError("invalid archive header") from error
+                if (member.type != tarfile.REGTYPE or member.name not in limits
+                        or member.name in files or not 0 <= member.size <= limits[member.name]
+                        or member.mode != (0o755 if member.name == "skillrail" else 0o644)):
+                    raise ValueError("unexpected archive member")
+                data = zipped.read(member.size)
+                padding_size = -member.size % 512
+                padding = zipped.read(padding_size)
+                if len(data) != member.size or padding != bytes(padding_size):
+                    raise ValueError("truncated member or invalid padding")
+                files[member.name] = data
+            else:
+                raise ValueError("too many archive members")
+    if files.keys() != limits.keys():
+        raise ValueError("missing archive members")
+    if files["SHA256SUMS"].decode() != "".join(f"{digest(files[n])}  {n}\n" for n in sorted(files) if n != "SHA256SUMS"):
+        raise ValueError("member checksum mismatch")
     meta = json.loads(files["BUILD.json"])
+    if (not isinstance(meta, dict) or set(meta) != {"version", "target", "source_date_epoch"}
+            or not isinstance(meta["version"], str) or not isinstance(meta["target"], str)
+            or type(meta["source_date_epoch"]) is not int
+            or not 0 <= meta["source_date_epoch"] <= 0o77777777777):
+        raise ValueError("invalid build metadata")
     if archive.name != archive_name(meta["version"], meta["target"]):
         raise ValueError("archive metadata mismatch")
     if run:

@@ -61,6 +61,12 @@ Identical binary/license/metadata inputs produce identical archives; this is
 paths. Record source head/tree, rustc and compiler versions with each build. Native
 runner labels are listed in the [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 Checksums detect corruption; authenticity depends on trusted delivery/review.
+Verification streams the compressed checksum under a 101 MiB input limit and
+admits only four plain USTAR regular-file headers before reading their payloads.
+The binary limit is 100 MiB; each metadata/license/checksum member is at most
+64 KiB. Extended PAX/GNU headers, duplicates, unexpected modes and malformed
+build metadata refuse. End padding is bounded; extension payloads are never
+materialized. These are admission limits, not executable authenticity proof.
 
 `Candidate archives` runs on PRs or workflow_dispatch. Download all four artifacts
 from the same reviewed source SHA into `target/dist` (retain sidecars). Workflow

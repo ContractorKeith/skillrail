@@ -141,6 +141,15 @@ CLI flag corrected the probe, not the application. macOS HTTPS remains pending.
 
 ## Remaining parent gates
 
+Archive verifier correction: a checksum-valid, roughly 100 KiB gzip containing
+a 101 MiB PAX extended header exhausted an 80 MiB Linux child memory limit
+before member admission. The regression failed before the fix; verification
+now rejects the fixed header before reading its payload. Compressed input,
+ordinary member payloads and trailing padding are bounded; only generated USTAR
+regular members are admitted. Typed BUILD metadata and all member modes are
+checked, with checksum-consistent malformed controls. No format extension is
+needed by the candidate packager.
+
 The first Intel macOS candidate job at `ac63a05` failed before packaging in
 `m5-smoke.py`'s immediate undo-preview assertion. Reading the actual PTY in
 64-byte fragments reproduced that assertion on Linux. M5 now uses M4's pinned
