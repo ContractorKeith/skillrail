@@ -92,6 +92,8 @@ struct Record {
     undo_changes: Vec<Change>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     install: Option<install::Install>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<install::Lifecycle>,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,11 +117,15 @@ pub struct PlanView {
     pub operation_id: String,
     pub token: String,
     pub changes: Vec<FileChangeView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub content_diff: Vec<install::ContentDiff>,
     pub targets: Vec<ToggleRequest>,
     pub files: Vec<PathBuf>,
     pub notes: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) install: Option<install::Manifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) previous_install: Option<install::Manifest>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct FileChangeView {
@@ -217,12 +223,14 @@ impl Journal {
                 "Operation ID was not found in this private journal.",
             ))?;
         let record = journal_record::decode(&bytes.bytes)?;
-        if ![1, 2, 3].contains(&record.version)
+        if ![1, 2, 3, 4].contains(&record.version)
             || record.id != id
             || !["prepared", "applied", "undoing", "undone"].contains(&record.status.as_str())
-            || (record.install.is_none() && record.changes.is_empty())
+            || (record.install.is_none() && record.lifecycle.is_none() && record.changes.is_empty())
             || record.changes.len() > 100
-            || (record.install.is_none() && record.requests.is_empty())
+            || (record.install.is_none()
+                && record.lifecycle.is_none()
+                && record.requests.is_empty())
             || record.requests.len() > 100
             || record.requests.iter().any(|r| {
                 r.validate().is_err()
@@ -579,6 +587,7 @@ impl Application {
             changes,
             undo_changes: vec![],
             install: None,
+            lifecycle: None,
         };
         journal_record::admit(&record)?;
         make_plan(record, false, None, inventory_revision, preconditions)
@@ -595,7 +604,29 @@ impl Application {
             Ok(_) => {}
         }
         let j = Journal::open(&self.paths)?;
-        let operations = j.records()?.into_iter().map(|r| OperationView { operation_id: r.id, status: r.status.clone(), targets: r.requests, changed_files: r.install.as_ref().map_or(r.changes.len(), |i| i.created_count()), action: if r.install.is_some() { "install" } else { "toggle" }, recovery: if r.status == "prepared" || r.status == "undoing" { "Interrupted operation: preview undo to restore only matching published files; resolve conflicts manually without deleting the journal." } else { "Undo requires exact postconditions; intervening edits are preserved." } }).collect();
+        let operations = j.records()?.into_iter().map(|r| {
+            let action = match (&r.lifecycle, &r.install) {
+                (Some(_), Some(_)) => "update",
+                (Some(_), None) => "uninstall",
+                (None, Some(_)) => "install",
+                (None, None) => "toggle",
+            };
+            OperationView {
+                operation_id: r.id,
+                status: r.status.clone(),
+                targets: r.requests,
+                changed_files: r.install.as_ref().map_or_else(
+                    || r.lifecycle.as_ref().map_or(r.changes.len(), |l| l.created_count()),
+                    |i| i.created_count(),
+                ),
+                action,
+                recovery: if r.status == "prepared" || r.status == "undoing" {
+                    "Interrupted operation: preview undo to restore only matching published files; resolve conflicts manually without deleting the journal."
+                } else {
+                    "Undo requires exact postconditions; intervening edits are preserved."
+                },
+            }
+        }).collect();
         Ok(History {
             schema_version: 1,
             operations,
@@ -614,6 +645,9 @@ impl Application {
             return Err(refused(
                 "Operation belongs to another home/project context; use its original explicit paths.",
             ));
+        }
+        if r.lifecycle.is_some() {
+            return install::lifecycle::plan_undo(self, r, before);
         }
         if r.install.is_some() {
             install::validate_undo(self, &r)?;
@@ -668,6 +702,9 @@ impl Application {
     ) -> Result<PlanView, AppError> {
         if plan.record.context != Context::from(&self.paths) {
             return Err(refused("Plan belongs to another application context."));
+        }
+        if plan.record.lifecycle.is_some() {
+            return install::lifecycle::apply(self, plan, checkpoint);
         }
         if plan.record.install.is_some() {
             return install::apply(self, plan, checkpoint);
@@ -930,6 +967,10 @@ pub enum Checkpoint {
     Published(usize),
     BeforePublish(usize),
     TreeFile(usize),
+    BeforeRetain(usize),
+    Retained(usize),
+    BeforeRestore(usize),
+    Restored(usize),
 }
 fn make_plan(
     record: Record,
@@ -975,6 +1016,8 @@ fn make_plan(
         token: crate::files::id(&[&encoded]),
         targets: record.requests.clone(),
         install: None,
+        previous_install: None,
+        content_diff: vec![],
         files: record.changes.iter().map(|c| c.path.clone()).collect(),
         notes: vec![
             "Configuration changes only; runtime loading, trust, managed policy and session overrides remain unresolved.",

@@ -693,3 +693,78 @@ before links. Regressions preserve snapshots/unknown aliases under budget,
 permission and malformed-root failures, and preserve late external case/native
 collisions. References outside the supported inventory context remain outside
 these guarantees; same-user syscall races and storage limits remain unchanged.
+
+## M6 owned lifecycle evidence and limits
+
+Owned update/uninstall reuse M5's acquisition, metadata admission, manifest,
+selected-agent locations and descriptor-relative install publisher. No dependency,
+native schema or MCP tool was added. Public diff states are full-folder relative
+paths plus byte SHA-256, size, type and normalized mode; payloads remain private.
+[The CLI lifecycle contract](CLI.md#owned-update-and-uninstall) describes source
+binding, original-context/journal requirements, provenance-derived replacement
+IDs, complete-scan refusals, schema-4 retention and recovery.
+
+Linux fixtures cover local/local-Git update/no-op, branch retargets, selected
+original agents/scopes, removed/added/binary/directory/mode-only changes, changed
+source-directory identities and last-publication source changes. Ownership,
+snapshot/manifest/link edits, absent links, case/Unicode aliases, unknown direct
+and file consumers, incomplete other-agent/plugin fingerprints, no-follow
+substitutions and cross-process lock attempts preserve originals. Budget tests
+exercise 200000-byte admitted content and 524200-byte early update refusal,
+large-source no-op without a new record, plus agent-root enumeration capacity.
+M5's source-tree/metadata/security limits and native admission evidence continue
+to apply; no native loading claim is inferred.
+
+Actual Linux process deaths use a fixture-scoped C interposer: exit 79 after a
+half-file write, exit 80 after creating the snapshot stage but before its identity
+is saved, exit 81 after original retention, exit 83 after replacement snapshot
+publication, and exit 82 after successive original restoration renames in separate
+undo processes. Portable typed checkpoints cover retention, file/link staging,
+publication and repeatedly interrupted cleanup/restoration. Original tree/link
+inodes are retained rather than deleted/recreated, so exact restoration does not
+rely on inode-number non-reuse. Completed operations require full postconditions;
+partial states are accepted only for prepared/undoing recovery. An older install
+cannot be marked undone while uninstall retains its original. Unknown consumers
+of backup/staged/replacement trees also refuse recovery.
+
+Failing-first regressions observed and corrected: accepted identical-content
+source-directory retargets; an undo preview accepting a replacement consumer;
+missing completed-update links accepted for undo; consumers of private backup
+content accepted; source edits at the snapshot-publication callback accepted;
+large unchanged source rejected by unnecessary lifecycle reservation; and older
+install undo accepted while uninstall retained its snapshot. Each failing public
+application test now passes. The first feature-test attempt overlapped a build
+with production edits and failed to compile; it is not counted as red behavior
+evidence. Fixture corrections (creating a hooks directory after Git `--template=`
+and choosing the actual serialized capacity boundary) are likewise not product
+regressions.
+
+Linux acceptance passes 165 Rust tests (148 inherited plus 17 lifecycle tests)
+and three Python terminal-comparison tests.
+The shared gate retains inherited fmt/Clippy/Rust/Python/CLI/MCP/M4/M5 PTY and
+simultaneous resize/input checks, and includes `scripts/m6-smoke.py`: fresh
+public CLI local/Git update/no-op/uninstall/undo and refusal controls, plus real
+PTY selected-item update/uninstall, diff scrolling, cancel/confirm, history and
+undo of both operations, terminal restoration and body/config canaries. A real
+SDK MCP client observes updated provenance with exactly five read-only tools;
+new/old bodies stay out of public JSON, terminal output, SQLite and MCP.
+
+Execution environment: Linux x86_64, kernel 7.2.8-9-omarchy, Rust 1.98.1
+(`48a229cea`), Git 2.56.0, Python 3.15.2; disk-backed
+`TMPDIR=/home/contractorkeith/.cache/s6`. Sources are disposable local and local
+Git fixtures with isolated agent paths and Git boundaries; no inventory network,
+user configuration, credential stores, source filters/hooks or installed scripts
+are used. Canonical source/native evidence is inherited from M5, including the
+pinned Codex parser and Claude reservation references above; it was not relabeled
+as new native-session evidence.
+
+Private originals and journals must be retained together. There is no automatic
+history/backup pruning; applied uninstall intentionally keeps private bytes for
+undo. Large two-version recovery can refuse within the fixed 4 MiB record budget.
+External filesystem references outside the selected supported inventory, same-UID
+final-check races, nonlocal filesystem/storage durability and permission changes
+retain the previously documented limits. macOS CI/APFS/Darwin behavior, real HTTPS
+acquisition and native Claude/Codex sessions remain separate integration/release
+prerequisites. Sequential author Standards and Spec self-reviews are not the
+parent's independent Standards/Spec/adversarial gates; no ready/merge/release
+claim is made here.

@@ -1,7 +1,9 @@
 //! Owned tree and selected links, sharing the mutation journal, lock and plan lifecycle.
 use super::*;
+pub(super) mod lifecycle;
 mod runtime;
 use crate::install_source::{self, Entry, InstallRequest, Provenance};
+pub(super) use lifecycle::{ContentDiff, Lifecycle};
 pub(super) use runtime::apply;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -98,8 +100,11 @@ pub(crate) struct Manifest {
     pub files: Vec<String>,
 }
 pub(super) fn validate_record(r: &Record) -> Result<(), AppError> {
+    if r.lifecycle.is_some() {
+        return lifecycle::validate_record(r);
+    }
     let Some(i) = &r.install else {
-        return if r.version == 3 {
+        return if matches!(r.version, 3 | 4) {
             Err(journal_error())
         } else {
             Ok(())
@@ -370,13 +375,16 @@ fn require_complete_skill_scan(
     Ok(())
 }
 fn validate_consumers(app: &Application, i: &Install) -> Result<(), AppError> {
+    validate_consumers_at(app, i, &i.manifest.snapshot)
+}
+fn validate_consumers_at(app: &Application, i: &Install, path: &Path) -> Result<(), AppError> {
     let (inventory, roots) = crate::discovery::discover_with_roots(&app.paths, 0);
     require_complete_skill_scan(&inventory, &roots, &[Agent::Claude, Agent::Codex])?;
     if inventory.occurrences.iter().any(|o| {
         o.canonical_path
             .clone()
             .or_else(|| o.original_path.canonicalize().ok())
-            .is_some_and(|p| p.starts_with(&i.manifest.snapshot))
+            .is_some_and(|p| p.starts_with(path))
             && !i.manifest.links.contains(&o.original_path)
     }) {
         return Err(refused(
@@ -396,6 +404,21 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
         return Ok(());
     }
     i.store.check()?;
+    // Completed installs require complete postconditions. In particular, an M6
+    // retention must not let an older install be marked undone while it owns backups.
+    if r.status == "applied" {
+        check_tree(i, &i.manifest.snapshot, false)?;
+        for l in &i.links {
+            if link_dir(l)?
+                .ok_or_else(conflict)?
+                .link(filename(&l.path)?)?
+                != l.published
+                || l.published.is_none()
+            {
+                return Err(conflict());
+            }
+        }
+    }
     validate_consumers(app, i)?;
     for l in &i.links {
         if let Some(d) = link_dir(l)? {
@@ -495,7 +518,15 @@ fn check_destinations(i: &Install) -> Result<(), AppError> {
     Ok(())
 }
 impl Application {
-    pub fn plan_install(&self, mut request: InstallRequest) -> Result<Plan, AppError> {
+    pub fn plan_install(&self, request: InstallRequest) -> Result<Plan, AppError> {
+        let record = self.prepare_install(request)?;
+        let install = record.install.as_ref().ok_or_else(journal_error)?;
+        check_names(self, install)?;
+        check_destinations(install)?;
+        admit(&record)?;
+        plan(record, false, None)
+    }
+    fn prepare_install(&self, mut request: InstallRequest) -> Result<Record, AppError> {
         request.agents.sort();
         let source = install_source::collect(&request)?;
         let owned_id = crate::files::id(&[
@@ -547,8 +578,7 @@ impl Application {
             files: BTreeMap::new(),
             links,
         };
-        check_names(self, &install)?;
-        check_destinations(&install)?;
+
         let record = Record {
             version: 3,
             id,
@@ -558,9 +588,9 @@ impl Application {
             changes: vec![],
             undo_changes: vec![],
             install: Some(install),
+            lifecycle: None,
         };
-        admit(&record)?;
-        plan(record, false, None)
+        Ok(record)
     }
 }
 pub(super) fn plan(record: Record, undo: bool, before: Option<Snapshot>) -> Result<Plan, AppError> {
@@ -609,6 +639,8 @@ pub(super) fn plan(record: Record, undo: bool, before: Option<Snapshot>) -> Resu
             "Apply revalidates source and destinations. Undo verifies owned content and discovered consumers. Created empty parent directories are retained.",
         ],
         install: Some(i.manifest.clone()),
+        previous_install: None,
+        content_diff: vec![],
     };
     Ok(Plan {
         record,

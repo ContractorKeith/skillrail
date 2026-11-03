@@ -13,3 +13,4 @@ python3 scripts/pty-readiness-smoke.py
 python3 scripts/mcp-smoke.py
 python3 scripts/m4-smoke.py
 python3 scripts/m5-smoke.py
+python3 scripts/m6-smoke.py

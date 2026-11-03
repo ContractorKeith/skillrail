@@ -66,6 +66,10 @@ enum Commands {
     Enable(ToggleArgs),
     /// Preview an owned snapshot and selected links; writes only with --apply.
     Install(InstallArgs),
+    /// Preview reacquisition of an owned snapshot from its declared source.
+    Update(OwnedArgs),
+    /// Preview removal of verified owned content and links.
+    Uninstall(OwnedArgs),
     /// Preview disabling a supported occurrence; writes only with --apply.
     Disable(ToggleArgs),
     /// List sanitized durable operation history (independent of the cache).
@@ -85,6 +89,19 @@ enum Commands {
     Mcp,
 }
 
+#[derive(clap::Args)]
+struct OwnedArgs {
+    /// Exact owned, item or occurrence ID; names never establish ownership.
+    id: String,
+    /// Publish the retained plan; without this flag the command only previews.
+    #[arg(long)]
+    apply: bool,
+    #[arg(long)]
+    json: bool,
+    /// Refuse if source, provenance or owned preconditions changed since this token.
+    #[arg(long)]
+    expect: Option<String>,
+}
 #[derive(clap::Args)]
 struct InstallArgs {
     source: String,
@@ -174,6 +191,8 @@ fn main() -> std::process::ExitCode {
                 | Commands::Show { json: true, .. }
                 | Commands::Drift { json: true, .. }
                 | Commands::Install(InstallArgs { json: true, .. })
+                | Commands::Update(OwnedArgs { json: true, .. })
+                | Commands::Uninstall(OwnedArgs { json: true, .. })
                 | Commands::Enable(ToggleArgs { json: true, .. })
                 | Commands::Disable(ToggleArgs { json: true, .. })
                 | Commands::Operations { json: true }
@@ -206,7 +225,29 @@ fn main() -> std::process::ExitCode {
         }
         let paths = skillrail::Paths::resolve(cli.home, cli.project, cli.state_dir)?;
         let application = skillrail::Application::new(paths);
-        if let Some(Commands::Install(args)) = &cli.command {
+        if let Some(Commands::Update(args) | Commands::Uninstall(args)) = &cli.command {
+            let plan = if matches!(cli.command, Some(Commands::Update(_))) {
+                application.plan_update(&args.id)?
+            } else {
+                application.plan_uninstall(&args.id)?
+            };
+            if args
+                .expect
+                .as_ref()
+                .is_some_and(|t| t != &plan.view().token)
+            {
+                return Err(skillrail::AppError::new(
+                    "mutation_conflict",
+                    "Preview changed; inspect a fresh preview before applying.",
+                ));
+            }
+            let result = if args.apply {
+                application.apply(&plan)?
+            } else {
+                plan.view().clone()
+            };
+            mutation_output(&result, json)?;
+        } else if let Some(Commands::Install(args)) = &cli.command {
             let plan = application.plan_install(skillrail::mutation::InstallRequest {
                 source: args.source.clone(),
                 git: args.git,

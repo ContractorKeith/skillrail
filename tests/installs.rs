@@ -87,6 +87,7 @@ fn git(f: &Fixture, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(f.path("source"))
+        .args(["-c", "core.hooksPath=/dev/null"])
         .args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
