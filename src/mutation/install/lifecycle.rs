@@ -128,6 +128,7 @@ pub(super) fn validate_record(r: &Record) -> Result<(), AppError> {
 }
 // Original links must be present, with exact durable identities, for a new mutation.
 fn original(app: &Application, i: &Install) -> Result<(), AppError> {
+    check_journal(app, i)?;
     i.store.check()?;
     check_tree(i, &i.manifest.snapshot, false)?;
     validate_consumers(app, i)?;
@@ -141,6 +142,14 @@ fn original(app: &Application, i: &Install) -> Result<(), AppError> {
         {
             return Err(conflict());
         }
+    }
+    Ok(())
+}
+fn check_journal(app: &Application, i: &Install) -> Result<(), AppError> {
+    if i.journal != app.paths.state_dir {
+        return Err(refused(
+            "Install belongs to another private journal; use its original --state-dir.",
+        ));
     }
     Ok(())
 }

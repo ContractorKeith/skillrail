@@ -85,6 +85,71 @@ fn request(f: &Fixture) -> skillrail::mutation::InstallRequest {
 }
 
 #[test]
+fn lifecycle_plans_refuse_another_journal_before_any_mutation() {
+    use std::os::unix::fs::MetadataExt;
+    for update in [false, true] {
+        for copy_journal in [false, true] {
+            let f = Fixture::new();
+            let a = app(&f);
+            let install = a.plan_install(request(&f)).unwrap();
+            a.apply(&install).unwrap();
+            let snapshot = &install.view().files[0];
+            let owned = snapshot.file_name().unwrap().to_str().unwrap();
+            let inode = fs::metadata(snapshot).unwrap().ino();
+            let links: Vec<_> = ["home/.agents/skills/demo", "home/.claude/skills/demo"]
+                .into_iter()
+                .map(|p| (f.path(p), fs::symlink_metadata(f.path(p)).unwrap().ino()))
+                .collect();
+            fs::write(f.path("source/new"), "changed").unwrap();
+            let plan = if update {
+                a.plan_update(owned)
+            } else {
+                a.plan_uninstall(owned)
+            }
+            .unwrap();
+            let b = skillrail::Application::new(
+                skillrail::Paths::resolve(
+                    Some(f.path("home")),
+                    Some(f.path("project")),
+                    Some(f.path("other-state")),
+                )
+                .unwrap(),
+            );
+            if copy_journal {
+                // Preserve private modes while reproducing an ordinary copied journal.
+                let status = Command::new("cp")
+                    .args(["-Rp"])
+                    .arg(f.path("state"))
+                    .arg(f.path("other-state"))
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+                let result = if update {
+                    b.plan_update(owned)
+                } else {
+                    b.plan_uninstall(owned)
+                };
+                assert!(result.is_err(), "copied journal admitted lifecycle preview");
+            }
+            assert!(b.apply(&plan).is_err());
+            assert_eq!(fs::metadata(snapshot).unwrap().ino(), inode);
+            for (path, inode) in &links {
+                assert_eq!(fs::symlink_metadata(path).unwrap().ino(), *inode);
+                assert_eq!(fs::read_link(path).unwrap(), *snapshot);
+            }
+            if !copy_journal {
+                assert!(!f.path("other-state/journal").exists());
+            }
+            // Refusal must leave the original plan usable and recoverable.
+            let applied = a.apply(&plan).unwrap();
+            a.apply(&a.plan_undo(&applied.operation_id).unwrap())
+                .unwrap();
+            assert_eq!(fs::metadata(snapshot).unwrap().ino(), inode);
+        }
+    }
+}
+
+#[test]
 fn owned_update_full_folder_diff_noop_uninstall_and_precise_undo() {
     let f = Fixture::new();
     fs::write(f.path("source/asset"), [0, 255, 1]).unwrap();

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """M4 real PTY preview/cancel/apply/history/undo. No agent sessions or user paths."""
 import fcntl
+import argparse
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ sys.dont_write_bytecode = True
 from smoke import command, screen_text, terminal_attributes_equal
 
 
-def main():
+def main(read_size=65536):
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
@@ -42,7 +43,7 @@ def main():
                     assert time.monotonic() < deadline, f"{description}: {screen_text(output, 40, 180)!r}"
                     assert process.poll() is None, f"exited before {description}"
                     if select.select([master], [], [], 0.1)[0]:
-                        output.extend(os.read(master, 65536))
+                        output.extend(os.read(master, read_size))
 
             def send(keys, needle):
                 os.write(master, keys)
@@ -62,7 +63,8 @@ def main():
             send(b"\x1b", "Skills/MCP: 1")
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
-            assert '"action": "undo"' in screen_text(output, 40, 180)
+            # A PTY read may end after the header but before the preview body.
+            wait_for(lambda text: '"action": "undo"' in text, "undo preview body")
             send(b"\x1b", "Skills/MCP: 1")
             assert config.read_bytes() != original_bytes
             send(b"h", "Operation history")
@@ -71,7 +73,7 @@ def main():
             assert config.read_bytes() == original_bytes
             send(b"\x1b", "Skills/MCP: 1")
             send(b"h", "Operation history")
-            assert "undone" in screen_text(output, 40, 180)
+            wait_for(lambda text: "Operation history" in text and "undone" in text, "undone history entry")
             send(b"\x1b", "Skills/MCP: 1")
             os.write(master, b"q")
             deadline = time.monotonic() + 10
@@ -94,4 +96,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--read-size", type=int, choices=(64, 65536), default=65536)
+    main(parser.parse_args().read_size)

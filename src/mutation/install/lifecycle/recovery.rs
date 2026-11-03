@@ -128,6 +128,7 @@ pub(in crate::mutation) fn apply(
 ) -> Result<PlanView, AppError> {
     let mut view = p.view.clone();
     let l = p.record.lifecycle.as_ref().ok_or_else(journal_error)?;
+    check_journal(app, &l.old)?;
     if p.undo && p.record.status == "undone" {
         view.status = "unchanged".into();
         return Ok(view);
