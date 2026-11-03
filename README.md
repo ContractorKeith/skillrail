@@ -4,8 +4,9 @@ A local-first skill and MCP registry for Claude Code and Codex. Planned v1
 explains provenance, configured visibility and local drift, with deliberate,
 recoverable changes. See [the build plan](docs/PLAN.md) for scope and acceptance.
 
-**Status:** M5 owned snapshot installs from explicit local/Git sources, selected
-agent links, guarded preview/apply/undo, CLI/TUI history, shared
+**Status:** Owned snapshot install/update/uninstall from explicit local/Git sources,
+selected agent links, full-folder hash/size/mode diffs, guarded preview/apply/undo,
+CLI/TUI history, shared
 inventory queries and read-only stdio MCP. CLI and TUI explain
 source identity, installed-version selection, scoped layer observations,
 configured status, visibility uncertainty and
@@ -37,7 +38,8 @@ cargo run --locked -- --home /path/to/home --project /path/to/project --state-di
 Use `/` to search, Enter for matching details, `k`/`a`/`s` to cycle kind/agent/scope,
 `d` to toggle drifted/unknown skills, `x` to clear filters, arrows to select,
 PgUp/PgDn to scroll, and `r` to refresh. `e` enables, `b` disables, and `h`
-opens operation history. `i` opens source/selection fields for a snapshot install. Choose an exact occurrence, inspect the preview, then
+opens operation history. `i` opens source/selection fields for a snapshot install.
+`u` previews update of the selected owned item; `D` previews uninstall. Choose an exact occurrence, inspect the preview, then
 Enter applies or Escape cancels. In history, `u` previews undo.
 `q`, Escape or Ctrl-C quit (Escape cancels an in-progress search). Piped TUI invocation fails
 with a diagnostic directing callers to `list --json`.
@@ -51,6 +53,8 @@ skillrail disable '<occurrence-id>' --agent codex --scope user --json
 skillrail disable '<occurrence-id>' --agent codex --scope user --apply --json
 skillrail install /absolute/local/skill --agent codex --scope user --json
 skillrail install /absolute/local/repo --git --ref main --skill skills/review --agent claude --scope project --apply --json
+skillrail update '<owned-or-item-id>' --json
+skillrail uninstall '<owned-or-item-id>' --apply --json
 skillrail operations --json
 skillrail undo 'op-<32-hex-digits>' --apply --json
 skillrail --project /absolute/project mcp
@@ -74,6 +78,11 @@ private permission/alias/ACL, cross-process lock, deterministic interrupted
 apply/undo, credential canary and real PTY confirmation/history/undo checks.
 M5 adds local/local-Git snapshot manifests, source/collision/security canaries,
 real partial-write process termination, install recovery and a PTY install flow.
+M6 adds source/precondition-bound updates, owned uninstall, private original
+retention, precise inode restoration, partial-write/publication process deaths,
+consumer/budget/conflict regressions and a real CLI/TUI lifecycle smoke.
+[Lifecycle and recovery limits](docs/CLI.md#owned-update-and-uninstall) describe
+payload-free diffs and private backup retention.
 Linux and macOS GitHub Actions run this exact script. Platform CI results and
 independent review must be checked on the PR; local Linux success is not macOS
 evidence. Disposable native Claude installation evidence is recorded; broader

@@ -652,3 +652,111 @@ operation is being undone. The existing same-user/root, final-check race,
 filesystem/exclusive-rename and fsync limitations apply to tree/link operations.
 No macOS/native session or real HTTPS network validation is inferred from the
 Linux local/local-Git fixtures. Those remain explicit integration prerequisites.
+
+## Owned update and uninstall
+
+`update <id>` and `uninstall <id>` default to preview. Add `--apply` to write;
+`--expect <token>` refuses a changed preview. Select an exact owned ID (the
+64-character `install.owned_id`), inventory item ID, or occurrence ID. A name,
+unknown ID, ambiguous selection, plugin, external item, missing/edited manifest,
+or ownership without matching durable installation evidence cannot authorize a
+write. Use the original home/project and private journal context. A manifest
+alone is insufficient to adopt an existing directory.
+
+```bash
+skillrail update '<owned-or-item-id>' --json
+skillrail update '<owned-or-item-id>' --expect '<preview-token>' --apply --json
+skillrail uninstall '<owned-or-item-id>' --json
+skillrail uninstall '<owned-or-item-id>' --expect '<preview-token>' --apply --json
+skillrail operations --json
+skillrail undo 'op-<32-hex-digits>' --apply --json
+```
+
+Update reacquires the declared local/Git origin, requested reference and exact
+previously selected subpath through the same bounded acquisition as install.
+It validates metadata for the original selected agents. New source skills do not
+change that selection. Agent locations, scope and skill name cannot widen or
+change implicitly; a changed name refuses and requires explicit uninstall/install.
+Git previews expose the resolved commit, including a provenance-only change when
+a ref moves to a different commit with identical content. Updates never check for
+upstream changes during inventory. An equal source and provenance is an
+`unchanged` no-op with no new operation record. No-op apply still revalidates
+ownership, tree, links, consumers and source. Local source directory identities
+(including local Git roots), content and resolved provenance bind retained plans
+and CLI expectation tokens. Reacquisition repeats under the lock and immediately
+before replacement-snapshot publication.
+
+Plan schema 1 adds `previous_install`, a validated original manifest, and
+`content_diff`, a sorted list of every added/removed/changed full-folder entry.
+Each diff entry contains `path`, `action` and nullable `before`/`after`. Each state
+contains `kind` (`file`/`directory`), byte `size`, `sha256` (ordinary SHA-256 of file
+bytes; null for directories) and normalized `mode` (JSON integers: 384 = 0600,
+448 = 0700). Mode-only changes, binary files, scripts, references, added/removed
+files and empty directories participate. Unchanged entries are omitted. For a
+provenance-only update or no-op, the diff is empty/omitted. `install` is the new
+manifest for update, the selected original for uninstall; `previous_install`
+retains the original facts on undo too. File actions describe original retention,
+replacement creation, link retarget/removal and undo restoration. No text hunks,
+raw skill bodies, arbitrary config values, script contents or backup bytes enter
+previews, history, inventory, SQLite or MCP. Paths, sizes and hashes intentionally
+reveal structural/content equality facts; this is a payload-free content diff,
+not a facility for viewing source text.
+
+Both operations require exact owned tree/file/directory identities and content,
+manifest bytes, and every original selected link. They refuse unexplained edits,
+missing links and unowned consumers. Relevant supported Claude/Codex roots and
+plugin/fallback scans must be complete, including occurrence fingerprints.
+Unknown extra files, incomplete scans, aliases and ownership conflicts preserve
+existing content. Publication repeats no-follow identity, collision, consumer and
+stage checks at the actual rename boundary. No agent configuration is rewritten.
+A current project's arbitrary external references and unrelated projects cannot
+be exhaustively enumerated; the selected supported inventory context bounds these
+checks. Concurrent external writers, final-check/syscall races and filesystem
+and fsync constraints remain those described above.
+
+Private journal schema 4 extends the same lock and guarded filesystem operations;
+schema 1/2 toggles and schema 3 installs remain recoverable. Original links move
+by exclusive rename into private `.skillrail-<operation-id>-original` directories
+inside their agent roots, with the backup-directory identity saved before each
+move. The original tree moves to the same private basename in the source store.
+These retained originals keep their exact inode, content, manifest, modes and
+provenance. Update then uses the existing install publisher to stage a new
+snapshot at its provenance-derived owned ID and publish the original selected
+links to it. Uninstall stops after retaining the original content/links: the
+public snapshot/link paths disappear while private recovery content stays. Paths
+can be temporarily absent between individual renames; this is not atomic across
+files, links or agents.
+
+Complete original and proposed bytes are stored once per lifecycle record with
+separate identity evidence. Admission reserves worst-case future tree/file/link
+metadata and backup-directory chains within the existing 4 MiB private record
+limit, plus directory enumeration capacity for backup/stage/publication. A large
+install may fit its original install record but refuse an update requiring both
+versions. Such a refusal occurs before original retention/publication; unchanged
+source no-ops do not need a new lifecycle reservation. Existing 64 MiB/10000-record
+history limits remain. There is no automatic backup/history garbage collection:
+keep the journal and retained original trees/links together. Deleting private
+backups can strand undo even when the journal still exists. Retention uses disk
+space until recovery restores the original; applied history is deliberately not
+pruned behind the user's back.
+
+Undo first validates the whole set. A completed update requires its complete
+replacement snapshot and exact published links; completed uninstall requires the
+originals still retained and public paths absent. Intervening edits, replacement
+identities, extra backup paths or unknown consumers of original/replacement/staged
+content refuse unchanged. Interrupted prepared/undoing records permit only
+matching partial publication/cleanup states. Recovery removes verified replacement
+content and restores original tree and link inodes by exclusive rename, preserving
+provenance precisely. Repeated interruptions retain progress, including death
+before stage identity or halfway through a new file write. Completed undo is a
+no-op on repetition. No force overwrite, filesystem-wide atomicity, historical
+cascade or automatic forward replay is provided. Undoing a later lifecycle can
+restore the exact earlier snapshot/link identities, allowing earlier undo only
+when its original postconditions still match; this does not relax config-toggle
+inode checks.
+
+TUI: select an owned item with arrows/search/filters, `u` previews update and `D`
+previews uninstall. The same full diff and manifest facts appear in the retained
+preview; PgUp/PgDn scroll, Enter confirms, Escape cancels. `h` lists operation
+actions/states; select an operation and press `u` to preview undo, then Enter to
+confirm or Escape to cancel. MCP remains the same five read-only tools.

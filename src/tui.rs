@@ -121,6 +121,7 @@ pub enum Action {
     Toggle(bool),
     History,
     Install,
+    Owned(bool),
 }
 impl View {
     pub fn handle(&mut self, event: &Event, inventory: &Inventory) -> Action {
@@ -187,6 +188,8 @@ impl View {
             KeyCode::Char('b') => return Action::Toggle(false),
             KeyCode::Char('h') => return Action::History,
             KeyCode::Char('i') => return Action::Install,
+            KeyCode::Char('u') => return Action::Owned(true),
+            KeyCode::Char('D') => return Action::Owned(false),
             KeyCode::Char('r') => return Action::Refresh,
             KeyCode::Char('x') => {
                 self.query = crate::query::Query::default();
@@ -208,7 +211,7 @@ impl View {
             .copied()
             .unwrap_or(usize::MAX);
         let header = format!(
-            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {} | e: enable  b: disable  h: history  i: install\n",
+            "Search: {}{} | kind: {} | agent: {} | scope: {}\n/: search  Enter: details  k/a/s: filters  d: drift  x: clear\nMatches: {} | drift: {} | e: enable  b: disable  h: history  i: install  u: update  D: uninstall\n",
             crate::presentation::safe(self.query.query.as_deref().unwrap_or("")),
             if self.editing { "_" } else { "" },
             self.query.kind.as_deref().unwrap_or("all"),
@@ -293,6 +296,7 @@ pub fn run(application: &Application) -> Result<(), AppError> {
             Action::Toggle(enabled) => mutations.toggle(enabled, &view, &inventory),
             Action::History => mutations.history(application),
             Action::Install => mutations.install(),
+            Action::Owned(update) => mutations.owned(application, &view, &inventory, update),
         }
         // Resize and other events redraw on the next iteration.
     }
@@ -349,6 +353,32 @@ impl InstallForm {
 impl MutationUi {
     pub fn install(&mut self) {
         self.screen = MutationScreen::Install(InstallForm::default());
+        self.scroll = 0;
+    }
+    pub fn owned(
+        &mut self,
+        application: &Application,
+        view: &View,
+        inventory: &Inventory,
+        update: bool,
+    ) {
+        let result = view
+            .query
+            .indices(inventory)
+            .get(view.selection.item)
+            .copied()
+            .ok_or_else(|| AppError::new("item_not_found", "No selected owned item."))
+            .and_then(|n| {
+                if update {
+                    application.plan_update(&inventory.items[n].id)
+                } else {
+                    application.plan_uninstall(&inventory.items[n].id)
+                }
+            });
+        self.screen = match result {
+            Ok(p) => MutationScreen::Preview(Box::new(p)),
+            Err(e) => MutationScreen::Message(e.to_string()),
+        };
         self.scroll = 0;
     }
     pub fn active(&self) -> bool {
@@ -570,10 +600,11 @@ impl MutationUi {
                 );
                 for (i, op) in history.operations.iter().enumerate() {
                     text.push_str(&format!(
-                        "{} {} | {} | {} files\n{}\n",
+                        "{} {} | {} | {} | {} files\n{}\n",
                         if i == selected { ">" } else { " " },
                         op.operation_id,
                         op.status,
+                        op.action,
                         op.changed_files,
                         op.recovery
                     ));
