@@ -6,11 +6,11 @@ configured visibility and local drift. V1 is done when docs/PLAN.md's acceptance
 checklist passes on Linux and macOS.
 
 ## Status
-M4 merged at 087901c after independent Standards/Spec reviews, recovery QA,
-and Linux/macOS CI (111 tests). Guarded CLI/TUI toggles, private journal and
-conflict-aware undo are implemented; docs/compatibility.md records limitations.
-Next: M5 owned snapshot installation from local and Git sources, selected agent
-links and undo. Broader native session verification remains a release gate.
+M5 merged at 6a536b9 after independent Standards/Spec reviews, adversarial QA,
+and Linux/macOS acceptance (148 Rust tests plus Python and interface smokes).
+Owned local/Git snapshots, selected agent links and guarded undo are implemented;
+docs/compatibility.md records limitations. Next: M6 owned update/uninstall,
+content diffs and undo. Broader native session verification remains a release gate.
 
 ## Commands
 `bash scripts/accept.sh` is the shared worker/reviewer/CI gate (Rust + Python 3).
