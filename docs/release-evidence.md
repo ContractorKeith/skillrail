@@ -13,14 +13,14 @@ as M7 native execution.
 Linux x86_64, kernel `7.2.8-9-omarchy`, Omarchy, glibc **2.44**,
 Rust **1.98.1 (48a229cea 2026-09-01)**, GCC **16.2.1 20260810**,
 Git **2.56.0**, Python **3.15.2**, Homebrew **7.0.12-4-g856ce8c**.
-Disk-backed private scratch: `/home/contractorkeith/.cache/s7`; /tmp is shared
+Disk-backed private scratch (`$SCRATCH`, TMPDIR `$SCRATCH/tmp`, created beforehand); /tmp is shared
 tmpfs and was not used as the harness fixture root. No HOME/CODEX_HOME overrides,
 credential copies, real agent-config/skill inventory or other-machine commands.
 
-- Exact native `/home/contractorkeith/.local/share/mise/installs/claude/2.1.316/claude --version`:
+- Exact native `$CLAUDE_BIN --version` (the mise-installed 2.1.316 executable):
   `2.1.316 (Claude Code)`. Executable SHA-256
   `fd13c70000fec3f2116dfbcbb6121210b4a29328bf0e46210a59dd594a67d824`.
-- Exact native `/home/contractorkeith/.local/share/mise/installs/codex/0.166.0/bin/codex --version`:
+- Exact native `$CODEX_BIN --version` (the mise-installed 0.166.0 executable):
   `codex-cli 0.166.0`. `--help` inspected, no session/config command started.
 - Packaged, extracted, source-installed and Homebrew-installed Skillrail binaries
   each returned `skillrail 0.1.0`; metadata alone was not used for this assertion.
@@ -31,19 +31,19 @@ installed executable. No native version upgrade is part of this change.
 
 ## Rerunnable commands and observed scope
 
-Use `TMPDIR=/home/contractorkeith/.cache/s7` for every command below.
+Run every command below with `TMPDIR=$SCRATCH/tmp` exported (create it first).
 
 | Command | Observed result |
 |---|---|
-| `bash scripts/accept.sh` | 166 Rust tests, 3 existing terminal Python tests, 5 archive tests, 1 cleanup regression; fmt/strict Clippy/build and all inherited CLI/cache/MCP/M4/M5/M6 PTY/recovery smokes pass |
+| `bash scripts/accept.sh` | 166 Rust tests, the terminal, archive, cleanup and failure Python tests; fmt/strict Clippy/build and all inherited CLI/cache/MCP/M4/M5/M6 PTY/recovery smokes pass |
 | `cargo run --locked -- --help` | exit 0, final command surface |
 | `git diff --check` and `git diff --check 12765e6...HEAD` | pass; final branch checked at handoff |
 | `python3 scripts/release.py build --target x86_64-unknown-linux-gnu` | optimized build; exact version/help, archive/member checksums, extraction and isolated populated inventory pass |
 | `python3 scripts/release.py verify target/dist/skillrail-v0.1.0-x86_64-unknown-linux-gnu.tar.gz --run` | matching native Linux execution passes |
-| `python3 scripts/native-release-evidence.py claude --claude-binary /home/contractorkeith/.local/share/mise/installs/claude/2.1.316/claude` | real local plugin installation in user/project/local scopes, v2 native records and exactly three selected replay occurrences pass; no model session |
+| `python3 scripts/native-release-evidence.py claude --claude-binary "$CLAUDE_BIN"` | real local plugin installation in user/project/local scopes, v2 native records and exactly three selected replay occurrences pass; no model session |
 | `python3 scripts/native-release-evidence.py https` | real anonymous HTTPS acquisition/apply of pinned public inert template, exact bytes and payload exclusion pass |
 | `bash scripts/validate-brew.sh target/dist` | local checksum-bound formula installs, brew test plus exact binary/populated fixture smoke pass; final cleanup preserves unrelated packages |
-| `cargo install --locked --path . --target x86_64-unknown-linux-gnu --root /home/contractorkeith/.cache/s7/source-install` | installs source candidate; exact installed binary passes version/help/populated inventory |
+| `cargo install --locked --path . --target x86_64-unknown-linux-gnu --root "$SCRATCH/source-install"` | installs source candidate; exact installed binary passes version/help/populated inventory |
 
 Native/HTTPS child limits are 45/120 seconds, build 1200, executable smokes 30,
 Homebrew subprocesses 300, and CI jobs 45 minutes. Timeout kills the process group
@@ -120,9 +120,10 @@ CLI flag corrected the probe, not the application. macOS HTTPS remains pending.
 
 - New archive tests initially failed because the implementation file did not yet
   exist. This is feature scaffolding evidence, not a pre-existing product bug.
-  Five tests now pass: repeated envelopes/corruption, internal tampering/traversal
+  The first archive tests covered repeated envelopes/corruption, internal tampering/traversal
   with a valid outer checksum, wrong version/foreign execution, missing formula
   assets, plus optimized-Python refusal so evidence assertions cannot be disabled. No documentation/status prose assertions were added.
+  Skeptic round 1 (issues #22-#25) later added target/version/epoch/refusal and guard-removal tests.
 - After the version metadata change, `cargo test --locked --test cli` failed:
   actual `skillrail 0.1.0`, old expected `skillrail 0.1.0-dev` (8 passed, 1 failed).
   The public binary test now expects the package's exact version; the full gate
@@ -194,11 +195,11 @@ for the pre-tag versus mandatory post-tag ordering.
 The installed-source smoke can be repeated after the cargo install command:
 
 ```sh
-TMPDIR=/home/contractorkeith/.cache/s7 python3 - <<'PY_SOURCE'
+python3 - "$SCRATCH/source-install/bin/skillrail" <<'PY_SOURCE'
 import sys
 from pathlib import Path
 sys.path.insert(0, "scripts")
 import release
-release.smoke(Path("/home/contractorkeith/.cache/s7/source-install/bin/skillrail"), "0.1.0")
+release.smoke(Path(sys.argv[1]), "0.1.0")
 PY_SOURCE
 ```

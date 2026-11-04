@@ -27,9 +27,11 @@ explicit selection, HTTPS-only remote support and conservative source guards.
 From this reviewed checkout, with Rust 1.98.1 and a C compiler:
 
 ```sh
-cargo install --locked --path .
+cargo install --locked --path .   # installs to ~/.cargo/bin (or $CARGO_HOME/bin)
 skillrail version  # skillrail 0.1.0
 ```
+
+To keep the install out of `~/.cargo/bin`, add `--root DIR`; the binary is then `DIR/bin/skillrail`.
 
 Packaging for four native Linux/macOS x86_64/arm64 archives and a checksum-bound
 Homebrew formula is prepared by [the release procedure](docs/RELEASE.md). This branch

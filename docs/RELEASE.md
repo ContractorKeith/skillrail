@@ -33,15 +33,18 @@ Rust/Python/CLI/MCP/PTY/recovery gates. The separate candidate matrix runs it on
 all four hosts before packaging. The 45-minute job limit bounds CI. A missing
 host/toolchain/action is a failed or pending prerequisite, not a skip.
 
-From each matching native host, with a short private disk-backed TMPDIR:
+From each matching native host, with a short private disk-backed TMPDIR
+(create it first; `release.py` refuses a TMPDIR that does not exist):
 
 ```sh
-TMPDIR=/home/contractorkeith/.cache/s7 bash scripts/accept.sh
-TMPDIR=/home/contractorkeith/.cache/s7 cargo run --locked -- --help
+export SCRATCH="$HOME/.cache/skillrail-release"
+export TMPDIR="$SCRATCH/tmp"; mkdir -p "$TMPDIR"
+bash scripts/accept.sh
+cargo run --locked -- --help
 git diff --check
 git diff --check 12765e6...HEAD
-TMPDIR=/home/contractorkeith/.cache/s7 python3 scripts/release.py build --target x86_64-unknown-linux-gnu
-TMPDIR=/home/contractorkeith/.cache/s7 python3 scripts/release.py verify target/dist/skillrail-v0.1.0-x86_64-unknown-linux-gnu.tar.gz --run
+python3 scripts/release.py build --target x86_64-unknown-linux-gnu
+python3 scripts/release.py verify target/dist/skillrail-v0.1.0-x86_64-unknown-linux-gnu.tar.gz --run
 ```
 
 Use a local private disk path on macOS and substitute the matching target.
@@ -60,6 +63,15 @@ Identical binary/license/metadata inputs produce identical archives; this is
 **not** a claim of bit-identical Rust binaries across hosts, toolchains or build
 paths. Record source head/tree, rustc and compiler versions with each build. Native
 runner labels are listed in the [GitHub runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+`verify` also refuses an archive whose version differs from this checkout's
+Cargo.toml and one whose `skillrail` is not a 64-bit ELF (Linux) or Mach-O
+(macOS) executable for the BUILD.json target (ELF e_machine, Mach-O cputype),
+so a repacked foreign binary cannot reach the formula. That inspects the header
+only; it does not run the binary. Every `release.py` refusal prints one line
+naming the file and problem and exits 1; `--debug` restores the traceback.
+`build` validates SOURCE_DATE_EPOCH (whole seconds, 0 to 8589934591) before any
+write and renames finished files into place, so a failure leaves the output
+directory unchanged.
 Checksums detect corruption; authenticity depends on trusted delivery/review.
 Verification streams the compressed checksum under a 101 MiB input limit and
 admits only four plain USTAR regular-file headers before reading their payloads.
@@ -79,8 +91,9 @@ substitute one architecture's binary or use cross-compilation as native proof.
 These optional probes are deliberately outside offline acceptance and CI:
 
 ```sh
-TMPDIR=/home/contractorkeith/.cache/s7 python3 scripts/native-release-evidence.py claude --claude-binary /home/contractorkeith/.local/share/mise/installs/claude/2.1.316/claude
-TMPDIR=/home/contractorkeith/.cache/s7 python3 scripts/native-release-evidence.py https
+# CLAUDE_BIN: absolute path of the native 2.1.316 executable, never a wrapper.
+python3 scripts/native-release-evidence.py claude --claude-binary "$CLAUDE_BIN"
+python3 scripts/native-release-evidence.py https
 ```
 
 `--binary /absolute/candidate/skillrail` selects an extracted binary; default is
@@ -121,7 +134,7 @@ pending. Do not disable the guards to obtain a pass.
 2. Pre-tag: collect four actual archives/sidecars and generate the full formula:
    `python3 scripts/release.py formula --assets target/dist --output target/proposed/Formula/skillrail.rb`.
    Missing assets or mismatched hashes refuse. Validate the host-local variant
-   with `TMPDIR=/home/contractorkeith/.cache/s7 bash scripts/validate-brew.sh target/dist`.
+   with `bash scripts/validate-brew.sh target/dist` (same TMPDIR).
    It uses a temporary local tap, actual file URL/hash and executable tests,
    then removes its install/tap, with autoremove/cleanup disabled and each brew
    subprocess bounded at 300 seconds. The full proposal uses future versioned HTTPS
@@ -151,8 +164,8 @@ from pre-tag local artifact proof. No hash placeholder is a verified asset.
 Source install from the reviewed checkout (no crates.io publication implied):
 
 ```sh
-cargo install --locked --path .
-skillrail version
+cargo install --locked --path . --root "$SCRATCH/install"   # without --root: ~/.cargo/bin
+"$SCRATCH/install/bin/skillrail" version
 ```
 
 After publication only: `cargo install --locked --git https://github.com/ContractorKeith/skillrail --tag v0.1.0`.
