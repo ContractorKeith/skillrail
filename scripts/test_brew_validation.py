@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 import release
+from release_fixtures import stub_binary
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -30,10 +31,12 @@ class BrewCleanup(unittest.TestCase):
             (prefix / "bin/skillrail").symlink_to(binary)
             assets = root / "assets"
             stub = root / "archive-fixture"
-            stub.write_bytes(b"inert archive fixture")
+            stub.write_bytes(stub_binary(release.host_target(), b"inert archive fixture"))
             release.package(stub, assets, release.host_target(), "0.1.0", 123)
             unrelated = root / "unrelated-package"
             unrelated.write_text("pre-existing")
+            stale = root / "stale-version"
+            stale.write_text("old version of an unrelated formula")
             fake = tools / "brew"
             fake.write_text('''#!/usr/bin/env python3
 import os
@@ -59,11 +62,13 @@ if args[0] == "--prefix":
     print(os.environ["BREW_TEST_PREFIX"])
 if args[0] == "uninstall" and os.environ.get("HOMEBREW_NO_AUTOREMOVE") != "1":
     Path(os.environ["BREW_TEST_UNRELATED"]).unlink()
+if args[0] in ("install", "uninstall") and os.environ.get("HOMEBREW_NO_INSTALL_CLEANUP") != "1":
+    Path(os.environ["BREW_TEST_STALE"]).unlink(missing_ok=True)
 ''')
             fake.chmod(0o755)
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                        TMPDIR=str(root), BREW_TEST_PREFIX=str(prefix),
-                       BREW_TEST_UNRELATED=str(unrelated))
+                       BREW_TEST_UNRELATED=str(unrelated), BREW_TEST_STALE=str(stale))
             # Do not inherit a setting that could mask a missing script guard.
             env.pop("HOMEBREW_NO_AUTOREMOVE", None)
             env.pop("HOMEBREW_NO_INSTALL_CLEANUP", None)
@@ -71,6 +76,7 @@ if args[0] == "uninstall" and os.environ.get("HOMEBREW_NO_AUTOREMOVE") != "1":
                                     env=env, cwd=ROOT, capture_output=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertTrue(unrelated.exists(), "validator cleanup autoremoved unrelated package")
+            self.assertTrue(stale.exists(), "validator install cleanup removed an unrelated old version")
 
 
 if __name__ == "__main__":

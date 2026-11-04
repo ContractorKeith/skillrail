@@ -5,21 +5,23 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 import release
+from release_fixtures import stub_binary
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class Failures(unittest.TestCase):
-    def run_case(self, scenario):
+    def run_case(self, scenario, extra_env=None):
         temporary = tempfile.TemporaryDirectory(prefix="b7-failure-")
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         tools = root / "tools"
         tools.mkdir()
         stub = root / "stub"
-        stub.write_bytes(b"inert")
+        stub.write_bytes(stub_binary(release.host_target(), b"inert"))
         release.package(stub, root / "assets", release.host_target(), "0.1.0", 123)
         fake = tools / "brew"
         fake.write_text('''#!/usr/bin/env python3
@@ -46,7 +48,12 @@ elif a[0] == "tap":
     subprocess.run(["git", "-C", str(tap), "remote", "add", "origin", origin], check=True)
     if s in ("partial-tap", "foreign-partial-tap"): sys.exit(7)
 elif a[0] == "install": installed.touch()
-elif a[0] == "test": sys.exit(7)
+elif a[0] == "test":
+    if s == "hang":
+        import time
+        time.sleep(15)
+        sys.exit(0)
+    sys.exit(7)
 elif a[0] == "uninstall":
     if s == "uninstall-fail": sys.exit(8)
     installed.unlink(missing_ok=True)
@@ -59,7 +66,7 @@ else: sys.exit(20)
         fake.chmod(0o755)
         env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                    TMPDIR=str(root), BREW_TEST_ROOT=str(root), BREW_TEST_SCENARIO=scenario,
-                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", **(extra_env or {}))
         result = subprocess.run(["bash", "scripts/validate-brew.sh", str(root / "assets")],
                                 cwd=ROOT, env=env, capture_output=True, timeout=60)
         calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
@@ -93,6 +100,15 @@ else: sys.exit(20)
                 self.assertIn("retained", result.stderr.decode())
                 if scenario != "untap-fail":
                     self.assertNotIn(["untap", "skillrail-check/candidate"], calls)
+
+    def test_hung_brew_command_times_out_and_cleans_up(self):
+        started = time.monotonic()
+        root, result, calls = self.run_case("hang", {"SKILLRAIL_BREW_TIMEOUT": "1"})
+        self.assertLess(time.monotonic() - started, 12, "validator waited for the hung command")
+        self.assertEqual(result.returncode, 124, result.stderr.decode())
+        self.assertFalse((root / "tap").exists())
+        self.assertFalse((root / "installed").exists())
+        self.assertIn(["untap", "skillrail-check/candidate"], calls)
 
 
 if __name__ == "__main__":

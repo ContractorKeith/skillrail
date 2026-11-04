@@ -14,7 +14,7 @@ import subprocess
 import sys
 with subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, start_new_session=True) as child:
     try:
-        status = child.wait(timeout=300)
+        status = child.wait(timeout=float(os.environ.get("SKILLRAIL_BREW_TIMEOUT", "300")))
     except subprocess.TimeoutExpired:
         os.killpg(child.pid, signal.SIGKILL)
         child.wait()
