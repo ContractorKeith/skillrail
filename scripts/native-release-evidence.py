@@ -11,6 +11,7 @@ import os
 import signal
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 if not __debug__:
@@ -34,7 +35,7 @@ def run(args, cwd, env, timeout=45):
             raise RuntimeError("command timed out; process group stopped; raw output withheld") from None
     if child.returncode:
         # Native stderr can contain configuration/auth context. Do not print it.
-        raise RuntimeError(f"command failed (exit {child.returncode}); raw output withheld")
+        raise RuntimeError(f"{Path(str(args[0])).name} failed (exit {child.returncode}); raw output withheld")
     return stdout
 
 
@@ -46,6 +47,7 @@ def write(path, content):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["claude", "https"])
+    parser.add_argument("--debug", action="store_true", help="show tracebacks for refusals")
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/skillrail")
     parser.add_argument("--claude-binary", type=Path)
     parser.add_argument("--expected-claude-version", default="2.1.316 (Claude Code)")
@@ -72,7 +74,8 @@ def main():
                        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", DISABLE_UPDATES="1",
                        DISABLE_AUTOUPDATER="1", DISABLE_TELEMETRY="1")
             version = run([claude, "--version"], project, env).decode().strip()
-            assert version == args.expected_claude_version, "unexpected native version"
+            assert version == args.expected_claude_version, (
+                f"{claude} reports {version!r}, expected {args.expected_claude_version!r}")
             market = root / "market"
             write(market / ".claude-plugin/marketplace.json", {
                 "name": "s7-fixture", "owner": {"name": "Fixture"},
@@ -122,4 +125,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (AssertionError, RuntimeError, OSError) as error:
+        if "--debug" in sys.argv:
+            raise
+        if isinstance(error, OSError) and error.filename:
+            message = f"{error.filename}: {error.strerror}"
+        else:
+            message = " ".join(str(error).split()) or "a verification check failed; rerun with --debug"
+        print(f"native-release-evidence.py: {message}", file=sys.stderr)
+        sys.exit(1)

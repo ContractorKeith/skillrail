@@ -13,6 +13,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_fixtures import stub_binary  # noqa: E402
+
 spec = importlib.util.spec_from_file_location("release", Path(__file__).with_name("release.py"))
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
@@ -106,7 +109,7 @@ sys.exit(1)
         with tempfile.TemporaryDirectory(prefix="s7-metadata-") as directory:
             root = Path(directory)
             binary = root / "binary"
-            binary.write_bytes(b"fixture")
+            binary.write_bytes(stub_binary(release.host_target()))
             archive = release.package(binary, root / "assets", release.host_target(), "0.1.0", 123)
             original = archive.read_bytes()
             for bad in ("epoch-string", "epoch-bool", "metadata-mode"):
@@ -135,7 +138,7 @@ sys.exit(1)
         with tempfile.TemporaryDirectory(prefix="s7-test-") as directory:
             root = Path(directory)
             binary = root / "skillrail"
-            binary.write_bytes(b"fixture binary bytes")
+            binary.write_bytes(stub_binary("x86_64-unknown-linux-gnu", b" binary bytes"))
             binary.chmod(0o755)
             archive = release.package(binary, root / "a", "x86_64-unknown-linux-gnu", "0.1.0", 123)
             other = release.package(binary, root / "b", "x86_64-unknown-linux-gnu", "0.1.0", 123)
@@ -150,7 +153,7 @@ sys.exit(1)
         with tempfile.TemporaryDirectory(prefix="s7-test-") as directory:
             root = Path(directory)
             binary = root / "skillrail"
-            binary.write_bytes(b"fixture")
+            binary.write_bytes(stub_binary(release.host_target()))
             archive = release.package(binary, root / "a", release.host_target(), "0.1.0", 123)
             original = archive.read_bytes()
             for traversal in (False, True):
@@ -178,6 +181,7 @@ sys.exit(1)
             with self.assertRaises(AssertionError):
                 release.smoke(binary, "0.1.0")
             foreign = next(t for t in release.TARGETS if t != release.host_target())
+            binary.write_bytes(stub_binary(foreign))
             archive = release.package(binary, root / "a", foreign, "0.1.0", 123)
             with self.assertRaises(ValueError):
                 release.verify(archive, run=True)
@@ -186,11 +190,308 @@ sys.exit(1)
         with tempfile.TemporaryDirectory(prefix="s7-test-") as directory:
             root = Path(directory)
             binary = root / "skillrail"
-            binary.write_bytes(b"fixture")
+            binary.write_bytes(stub_binary(release.host_target()))
             release.package(binary, root / "a", release.host_target(), "0.1.0", 123)
             with self.assertRaises(ValueError):
                 release.formula(root / "a", "0.1.0")
 
+
+HOST = release.host_target()
+FOREIGN = [t for t in release.TARGETS if t != HOST]
+SCRIPT = Path(__file__).with_name("release.py")
+EVIDENCE = Path(__file__).with_name("native-release-evidence.py")
+
+
+def run_script(script, *args, env=None):
+    return subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True,
+                          timeout=60, env=env)
+
+
+def assert_one_line_refusal(case, result, *needles):
+    case.assertEqual(result.returncode, 1, result.stderr)
+    lines = result.stderr.strip().splitlines()
+    case.assertEqual(len(lines), 1, result.stderr)
+    case.assertNotIn("Traceback", result.stderr)
+    for needle in needles:
+        case.assertIn(needle, lines[0])
+
+
+def sidecar_for(archive):
+    archive.with_suffix(archive.suffix + ".sha256").write_text(
+        f"{release.digest(archive.read_bytes())}  {archive.name}\n")
+
+
+def good_files(target=HOST, version="0.1.0"):
+    files = {"skillrail": stub_binary(target), "LICENSE": b"license\n",
+             "BUILD.json": (json.dumps({"version": version, "target": target, "source_date_epoch": 123},
+                                       sort_keys=True) + "\n").encode()}
+    return files
+
+
+def with_sums(files):
+    files = dict(files)
+    files["SHA256SUMS"] = "".join(
+        f"{release.digest(d)}  {n}\n" for n, d in sorted(files.items()) if n != "SHA256SUMS").encode()
+    return files
+
+
+def entries_for(files):
+    return [{"name": n, "data": d} for n, d in sorted(files.items())]
+
+
+def tar_bytes(entries, end=bytes(1024)):
+    """Hand-built USTAR so a test can break exactly one record at a time."""
+    out = bytearray()
+    for entry in entries:
+        data = entry["data"]
+        info = tarfile.TarInfo(entry["name"])
+        info.mode = entry.get("mode", 0o755 if entry["name"] == "skillrail" else 0o644)
+        info.mtime = 123
+        info.type = entry.get("type", tarfile.REGTYPE)
+        info.size = len(data)
+        if info.type == tarfile.SYMTYPE:
+            info.linkname = "elsewhere"
+        out += info.tobuf(tarfile.USTAR_FORMAT) + data + entry.get("pad", bytes(-len(data) % 512))
+    return bytes(out) + end
+
+
+def write_archive(directory, entries, name=None, end=bytes(1024), version="0.1.0"):
+    archive = Path(directory) / (name or release.archive_name(version, HOST))
+    archive.write_bytes(gzip.compress(tar_bytes(entries, end), mtime=0))
+    sidecar_for(archive)
+    return archive
+
+
+class Guards(unittest.TestCase):
+    """Each admission guard is the only reason its malformed archive is refused."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="s7-guard-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def refused(self, archive, text):
+        with self.assertRaisesRegex(ValueError, text):
+            release.verify(archive)
+
+    def test_hand_built_baseline_is_accepted(self):
+        archive = write_archive(self.root, entries_for(with_sums(good_files())))
+        self.assertEqual(release.verify(archive)["target"], HOST)
+
+    def test_archive_name_must_match_build_metadata(self):
+        other = FOREIGN[0]
+        archive = write_archive(self.root, entries_for(with_sums(good_files())),
+                                name=release.archive_name("0.1.0", other))
+        self.refused(archive, "archive metadata mismatch")
+
+    def test_duplicate_member_refuses(self):
+        # The four-header loop and the missing-member check also refuse any
+        # duplicate, so this pins the outcome rather than a single guard.
+        files = with_sums(good_files())
+        entries = [e for e in entries_for(files) if e["name"] != "SHA256SUMS"]
+        entries.insert(1, {"name": "LICENSE", "data": b"first license\n"})
+        self.assertEqual([e["name"] for e in entries].count("LICENSE"), 2)
+        self.refused(write_archive(self.root, entries), "archive members?")
+
+    def test_nonzero_member_padding_refuses(self):
+        entries = entries_for(with_sums(good_files()))
+        entries[0]["pad"] = b"\x01" + bytes(-len(entries[0]["data"]) % 512 - 1)
+        self.assertGreater(len(entries[0]["pad"]), 1)
+        self.refused(write_archive(self.root, entries), "padding")
+
+    def test_end_padding_must_be_all_zero(self):
+        entries = entries_for(with_sums(good_files()))
+        self.refused(write_archive(self.root, entries, end=bytes(1024) + b"\x01"), "end padding")
+        self.refused(write_archive(self.root, entries, end=bytes(512)), "end padding")
+        self.refused(write_archive(self.root, entries, end=bytes(512 + 10241)), "end padding")
+
+    def test_member_size_limit(self):
+        files = good_files()
+        files["LICENSE"] = b"x" * 65537
+        self.refused(write_archive(self.root, entries_for(with_sums(files))), "unexpected archive member")
+
+    def test_member_type_must_be_regular(self):
+        files = good_files()
+        files["LICENSE"] = b""
+        entries = entries_for(with_sums(files))
+        for entry in entries:
+            if entry["name"] == "LICENSE":
+                entry["type"] = tarfile.SYMTYPE
+        self.refused(write_archive(self.root, entries), "unexpected archive member")
+
+    def test_compressed_budget(self):
+        good = write_archive(self.root, entries_for(with_sums(good_files())))
+        raw = good.read_bytes()
+        # A 102 MiB gzip FCOMMENT keeps the stream valid and the checksum matching.
+        big = self.root / "big" / good.name
+        big.parent.mkdir()
+        with big.open("wb") as out:
+            out.write(raw[:3] + bytes([raw[3] | 0x10]) + raw[4:10])
+            chunk = b"A" * (1024 * 1024)
+            for _ in range(102):
+                out.write(chunk)
+            out.write(b"\0" + raw[10:])
+        sidecar_for(big)
+        self.refused(big, "budget")
+
+
+class Executables(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="s7-exec-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.binary = self.root / "skillrail"
+
+    def package(self, binary_target, claimed, version="0.1.0", out="a"):
+        self.binary.write_bytes(stub_binary(binary_target))
+        return release.package(self.binary, self.root / out, claimed, version, 123)
+
+    def test_every_foreign_target_label_is_refused(self):
+        for claimed in FOREIGN:
+            with self.subTest(claimed=claimed):
+                archive = self.package(HOST, claimed, out=claimed)
+                with self.assertRaisesRegex(ValueError, "executable"):
+                    release.verify(archive)
+
+    def test_each_target_accepts_its_own_executable(self):
+        for target in release.TARGETS:
+            with self.subTest(target=target):
+                self.assertEqual(release.verify(self.package(target, target, out=target))["target"], target)
+
+    def test_unrecognized_executable_is_refused(self):
+        self.binary.write_bytes(b"#!/bin/sh\necho hi\n")
+        archive = release.package(self.binary, self.root / "a", HOST, "0.1.0", 123)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            release.verify(archive)
+
+    def test_formula_refuses_mislabeled_assets_and_accepts_real_ones(self):
+        assets = self.root / "four"
+        for target in release.TARGETS:
+            self.package(target, target, out="four")
+        output = self.root / "full.rb"
+        result = run_script(SCRIPT, "formula", "--assets", str(assets), "--output", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_text().count("sha256 "), 4)
+        mislabeled = FOREIGN[0]
+        self.package(HOST, mislabeled, out="four")
+        output.unlink()
+        result = run_script(SCRIPT, "formula", "--assets", str(assets), "--output", str(output))
+        assert_one_line_refusal(self, result, mislabeled, "executable")
+        self.assertFalse(output.exists())
+
+    def test_version_other_than_checkout_is_refused(self):
+        archive = self.package(HOST, HOST, version="0.2.0")
+        with self.assertRaisesRegex(ValueError, "version"):
+            release.verify(archive)
+        self.assertEqual(release.verify(archive, version="0.2.0")["version"], "0.2.0")
+
+
+class Epoch(unittest.TestCase):
+    BAD = ("abc", "-5", "99999999999999", "", " 5", "1.5", "٣")
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="s7-epoch-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
+    def test_package_validates_epoch_before_writing(self):
+        binary = self.root / "skillrail"
+        binary.write_bytes(stub_binary(HOST))
+        out = self.root / "out"
+        out.mkdir()
+        (out / "keep").write_text("x")
+        for bad in (-5, 99999999999999, "abc", True):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    release.package(binary, out, HOST, "0.1.0", bad)
+                self.assertEqual([p.name for p in out.iterdir()], ["keep"])
+        with self.assertRaises(ValueError):
+            release.package(binary, self.root / "never-created", HOST, "0.1.0", -5)
+        self.assertFalse((self.root / "never-created").exists())
+
+    def test_successful_package_leaves_only_final_files(self):
+        binary = self.root / "skillrail"
+        binary.write_bytes(stub_binary(HOST))
+        release.package(binary, self.root / "out", HOST, "0.1.0", 0)
+        name = release.archive_name("0.1.0", HOST)
+        self.assertEqual(sorted(p.name for p in (self.root / "out").iterdir()), [name, name + ".sha256"])
+
+    def test_cli_build_refuses_bad_epoch_before_any_write(self):
+        fake = self.root / "bin"
+        fake.mkdir()
+        (fake / "cargo").write_text("#!/bin/sh\nexit 99\n")
+        (fake / "cargo").chmod(0o755)
+        out = self.root / "out"
+        out.mkdir()
+        (out / "keep").write_text("x")
+        for bad in self.BAD:
+            with self.subTest(bad=bad):
+                env = dict(os.environ, SOURCE_DATE_EPOCH=bad, PATH=str(fake) + os.pathsep + os.environ["PATH"])
+                result = run_script(SCRIPT, "build", "--target", HOST, "--output", str(out), env=env)
+                assert_one_line_refusal(self, result, "SOURCE_DATE_EPOCH")
+                self.assertEqual([p.name for p in out.iterdir()], ["keep"])
+
+
+class Refusals(unittest.TestCase):
+    """Every refusal is one line naming the file and the problem."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="s7-refuse-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.binary = self.root / "skillrail"
+        self.binary.write_bytes(stub_binary(HOST))
+        self.archive = release.package(self.binary, self.root / "a", HOST, "0.1.0", 123)
+
+    def test_missing_sidecar(self):
+        self.archive.with_suffix(".gz.sha256").unlink()
+        assert_one_line_refusal(self, run_script(SCRIPT, "verify", str(self.archive)),
+                                self.archive.name, "sha256", "missing")
+
+    def test_truncated_archive(self):
+        self.archive.write_bytes(self.archive.read_bytes()[:-40])
+        sidecar_for(self.archive)
+        assert_one_line_refusal(self, run_script(SCRIPT, "verify", str(self.archive)),
+                                self.archive.name, "gzip")
+
+    def test_random_bytes(self):
+        self.archive.write_bytes(os.urandom(4096))
+        sidecar_for(self.archive)
+        assert_one_line_refusal(self, run_script(SCRIPT, "verify", str(self.archive)),
+                                self.archive.name, "gzip")
+
+    def test_wrong_version(self):
+        other = release.package(self.binary, self.root / "b", HOST, "0.2.0", 123)
+        assert_one_line_refusal(self, run_script(SCRIPT, "verify", str(other)),
+                                other.name, "0.2.0", "0.1.0")
+
+    def test_missing_archive_and_wrong_binary_version(self):
+        assert_one_line_refusal(self, run_script(SCRIPT, "verify", str(self.root / "nope.tar.gz")), "nope.tar.gz")
+        shell = self.root / "sh-binary"
+        shell.write_text('#!/bin/sh\necho "skillrail 9.9.9"\n')
+        shell.chmod(0o755)
+        with self.assertRaisesRegex(AssertionError, "9.9.9"):
+            release.smoke(shell, "0.1.0")
+
+    def test_debug_flag_restores_traceback(self):
+        result = run_script(SCRIPT, "--debug", "verify", str(self.root / "nope.tar.gz"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Traceback", result.stderr)
+
+    def test_run_refuses_missing_tmpdir(self):
+        env = dict(os.environ, TMPDIR=str(self.root / "does-not-exist"))
+        result = run_script(SCRIPT, "verify", str(self.archive), "--run", env=env)
+        assert_one_line_refusal(self, result, "TMPDIR", "does-not-exist")
+
+    def test_native_evidence_refusals(self):
+        missing = self.root / "no-such-skillrail"
+        result = run_script(EVIDENCE, "https", "--binary", str(missing))
+        assert_one_line_refusal(self, result, "no-such-skillrail")
+        fake = self.root / "claude"
+        fake.write_text('#!/bin/sh\necho "1.0.0 (Claude Code)"\n')
+        fake.chmod(0o755)
+        result = run_script(EVIDENCE, "claude", "--binary", str(fake), "--claude-binary", str(fake))
+        assert_one_line_refusal(self, result, str(fake), "1.0.0")
 
 if __name__ == "__main__":
     unittest.main()
