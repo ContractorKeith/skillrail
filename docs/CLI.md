@@ -1,4 +1,4 @@
-# CLI contract (M5)
+# CLI contract (v0.1.0 candidate)
 
 Implemented commands:
 
@@ -13,6 +13,8 @@ skillrail drift [filters] [--json]
 skillrail enable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
 skillrail disable <item-or-occurrence-id> --agent claude|codex --scope user|project|local [--expect <token>] [--apply] [--json]
 skillrail install <source> --agent claude|codex [--agent claude|codex] --scope user|project [--git] [--ref <ref>] [--skill <subpath>] [--expect <token>] [--apply] [--json]
+skillrail update <owned-or-item-id> [--expect <token>] [--apply] [--json]
+skillrail uninstall <owned-or-item-id> [--expect <token>] [--apply] [--json]
 skillrail operations [--json]
 skillrail undo <operation-id> [--apply] [--json]
 skillrail mcp
@@ -22,7 +24,7 @@ No subcommand means `tui`. `--help` and `--version` require no application state
 Filters: `--kind skill|mcp`, `--agent claude|codex`,
 `--scope user|project|local|unknown`, `--limit 1..200` (default 100),
 `--offset 0..1000000` (default 0), `--revision <64-lowercase-hex>`.
-Global paths below apply to every command. Update/uninstall remain M6.
+Global paths below apply to every command. See owned lifecycle semantics below.
 
 ## Paths and isolation
 
@@ -439,9 +441,10 @@ the existing key behavior while search is being edited.
 ## Durable journal, history and recovery
 
 `<state-dir>/journal` is durable, mode 0700. Its lock and JSON operation records
-are user-owned mode 0600 regular files with exactly one link. New writes use
-private schema version 2; version-1 records remain readable and are rewritten as
-version 2 on recovery. The public schema/cache/MCP contracts remain version 1.
+are user-owned mode 0600 regular files with exactly one link. Toggle writes use
+private schema version 2; version-1 toggle records remain readable and are rewritten as
+version 2 on recovery. Snapshot installs use schema 3; owned update/uninstall use
+schema 4, with older recovery retained as described below. The public schema/cache/MCP contracts remain version 1.
 Version 2 stores each original/proposed byte sequence once; publication and undo
 metadata refer to those bytes instead of duplicating them. Original
 and proposed config bytes live only in these private records and private staging
