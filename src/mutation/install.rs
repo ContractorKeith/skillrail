@@ -396,11 +396,11 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
             "Install belongs to another private journal; use its original --state-dir.",
         ));
     }
-    if r.status == "undone" {
+    if r.status == Status::Undone {
         return Ok(());
     }
     i.store.check()?;
-    if r.status == "applied" {
+    if r.status == Status::Applied {
         check_tree(i, &i.manifest.snapshot, false)?;
         for l in &i.links {
             if link_dir(l)?
@@ -439,7 +439,7 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
     }
     let stage = i.store.path.join(&i.stage);
     if !absent(&i.manifest.snapshot) {
-        check_tree(i, &i.manifest.snapshot, r.status == "undoing")?;
+        check_tree(i, &i.manifest.snapshot, r.status == Status::Undoing)?;
     }
     if !absent(&stage) {
         check_tree(i, &stage, true)?;
@@ -573,7 +573,7 @@ impl Application {
         let record = Record {
             version: 3,
             id,
-            status: "prepared".into(),
+            status: Status::Prepared,
             context: (&self.paths).into(),
             requests: vec![],
             changes: vec![],

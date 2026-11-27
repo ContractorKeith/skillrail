@@ -80,7 +80,7 @@ fn old_record(r: &Record, old: Install) -> Record {
             .trim_end_matches("-install")
             .into(),
         context: r.context.clone(),
-        status: "applied".into(),
+        status: Status::Applied,
         requests: vec![],
         changes: vec![],
         undo_changes: vec![],
@@ -200,7 +200,7 @@ impl Application {
         let mut old = None;
         for r in records
             .iter()
-            .filter(|r| r.status == "applied" && r.context == Context::from(&self.paths))
+            .filter(|r| r.status == Status::Applied && r.context == Context::from(&self.paths))
         {
             if let Some(i) = &r.install
                 && i.manifest.snapshot == snapshot
@@ -222,7 +222,7 @@ impl Application {
             Record {
                 version: 4,
                 id: random_id()?,
-                status: "prepared".into(),
+                status: Status::Prepared,
                 context: (&self.paths).into(),
                 requests: vec![],
                 changes: vec![],

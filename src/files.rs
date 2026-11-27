@@ -10,10 +10,7 @@ pub fn read(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        #[cfg(target_os = "linux")]
-        options.custom_flags(0x20000 | 0x800);
-        #[cfg(target_os = "macos")]
-        options.custom_flags(0x100 | 0x4);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     let file = options.open(path).map_err(|_| ())?;
     let opened = file.metadata().map_err(|_| ())?;

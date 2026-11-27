@@ -14,6 +14,7 @@ import time
 import sys
 sys.dont_write_bytecode = True
 from smoke import command, screen_text, terminal_attributes_equal
+from pty_keys import ENTER, ESC, install_form
 
 
 def main(read_size=65536):
@@ -59,36 +60,36 @@ def main(read_size=65536):
             wait_for(lambda text: "Skills/MCP: 0" in text, "initial inventory")
             send(b"i", "Install snapshot")
             send(str(source).encode(), "<source entered>")
-            send(b"\x1b", "Skills/MCP: 0")
+            send(ESC, "Skills/MCP: 0")
             assert not link.exists()
             assert not (root / "state/journal").exists()
 
             def preview_install():
                 send(b"i", "Install snapshot")
-                os.write(master, str(source).encode() + b"\r\r\rselected\r\r\r")
+                os.write(master, install_form(source, skill=b"selected"))
                 wait_for(lambda text: "Enter: apply" in text, "install preview")
 
             preview_install()
             assert not link.exists()
             assert not (root / "home/.skillrail-sources").exists()
-            send(b"\x1b", "Skills/MCP: 0")
+            send(ESC, "Skills/MCP: 0")
             preview_install()
-            send(b"\r", "applied")
+            send(ENTER, "applied")
             assert link.is_symlink()
             snapshot = link.resolve()
             assert snapshot != source / "selected"
             assert not (root / "home/.agents/skills/other").exists()
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
             assert '\"action\": \"undo\"' in screen_text(output, 40, 180)
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             assert link.exists()
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
-            send(b"\r", "undone")
+            send(ENTER, "undone")
             assert not link.exists() and not snapshot.exists()
-            send(b"\x1b", "Skills/MCP: 0")
+            send(ESC, "Skills/MCP: 0")
             os.write(master, b"q")
             deadline = time.monotonic() + 10
             while process.poll() is None:

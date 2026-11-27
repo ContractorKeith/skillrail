@@ -13,6 +13,7 @@ import time
 import sys
 sys.dont_write_bytecode = True
 from smoke import command, screen_text, terminal_attributes_equal
+from pty_keys import DOWN, ENTER, ESC, PAGE_DOWN
 
 
 def main():
@@ -71,45 +72,45 @@ def main():
             wait_for(lambda text: "Skills/MCP: 1" in text, "inventory")
             send(b"u", '"action": "update"')
             assert link.resolve() == original
-            os.write(master, b"\x1b[6~" * 8)
+            os.write(master, PAGE_DOWN * 8)
             wait_for(lambda text: '"content_diff"' in text or '"sha256"' in text or '"size"' in text, "content diff")
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             assert link.resolve() == original
             send(b"u", '"action": "update"')
-            send(b"\r", "applied")
+            send(ENTER, "applied")
             updated = link.resolve()
             assert updated != original and (updated / "asset").read_bytes() == bytes([0, 255, 2, 3])
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             send(b"D", '"action": "uninstall"')
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             assert link.exists()
             send(b"D", '"action": "uninstall"')
-            send(b"\r", "applied")
+            send(ENTER, "applied")
             assert not link.exists() and not updated.exists()
-            send(b"\x1b", "Skills/MCP: 0")
+            send(ESC, "Skills/MCP: 0")
             send(b"h", "Operation history")
             operations = cli("operations")["operations"]
             index = next(i for i, op in enumerate(operations) if op["action"] == "uninstall")
             if index:
-                os.write(master, b"\x1b[B" * index)
+                os.write(master, DOWN * index)
             send(b"u", '"action": "undo"')
-            send(b"\x1b", "Skills/MCP: 0")
+            send(ESC, "Skills/MCP: 0")
             assert not link.exists()
             send(b"h", "Operation history")
             if index:
-                os.write(master, b"\x1b[B" * index)
+                os.write(master, DOWN * index)
             send(b"u", '"action": "undo"')
-            send(b"\r", "undone")
+            send(ENTER, "undone")
             assert link.resolve() == updated
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             send(b"h", "Operation history")
             update_index = next(i for i, op in enumerate(operations) if op["action"] == "update")
             if update_index:
-                os.write(master, b"\x1b[B" * update_index)
+                os.write(master, DOWN * update_index)
             send(b"u", '"action": "undo"')
-            send(b"\r", "undone")
+            send(ENTER, "undone")
             assert link.resolve() == original
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             os.write(master, b"q")
             deadline = time.monotonic() + 10
             while process.poll() is None:

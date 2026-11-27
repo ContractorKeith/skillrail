@@ -387,13 +387,14 @@ pub(crate) fn filename(path: &Path) -> Result<&str, AppError> {
 #[cfg(target_os = "macos")]
 fn no_extended_acl(file: &File) -> Result<(), AppError> {
     use std::ffi::c_void;
+    const ACL_TYPE_EXTENDED: i32 = 0x100;
     unsafe extern "C" {
         fn acl_get_fd_np(fd: i32, acl_type: i32) -> *mut c_void;
         fn acl_get_entry(acl: *mut c_void, entry_id: i32, entry: *mut *mut c_void) -> i32;
         fn acl_free(acl: *mut c_void) -> i32;
     }
     // SAFETY: file fd is live; ACL_TYPE_EXTENDED is the documented Darwin value.
-    let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), 0x100) };
+    let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
     if acl.is_null() {
         if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
             return Ok(());

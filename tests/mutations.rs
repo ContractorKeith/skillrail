@@ -930,6 +930,37 @@ fn extended_acl_is_refused_instead_of_dropping_access_metadata() {
     assert_eq!(result.status.code(), Some(4));
     assert_eq!(bytes(&path), original);
 }
+#[cfg(target_os = "macos")]
+#[test]
+fn extended_acl_is_refused_instead_of_dropping_access_metadata() {
+    let f = Fixture::new();
+    let id = f.occurrence("mcp");
+    let path = f.path("home/.codex/config.toml");
+    let original = bytes(&path);
+    let user = std::env::var("USER").unwrap();
+    let chmod = Command::new("chmod")
+        .args(["+a", &format!("{user} allow read")])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        chmod.status.success(),
+        "Darwin ACL fixture prerequisite: {}",
+        String::from_utf8_lossy(&chmod.stderr)
+    );
+    let listing = || {
+        let out = Command::new("ls").arg("-le").arg(&path).output().unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let acl_before = listing();
+    assert!(acl_before.contains("0: user:"), "{acl_before}");
+    let result = f.run(&[
+        "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
+    ]);
+    assert_eq!(result.status.code(), Some(4));
+    assert_eq!(bytes(&path), original);
+    assert_eq!(listing(), acl_before);
+}
 #[test]
 fn no_change_apply_still_revalidates_the_preview() {
     let f = Fixture::new();

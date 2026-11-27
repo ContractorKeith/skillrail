@@ -79,12 +79,45 @@ struct Change {
     published: Option<Snapshot>,
     stage: String,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Status {
+    Prepared,
+    Applied,
+    Undoing,
+    Undone,
+}
+impl Status {
+    const ALL: [Status; 4] = [
+        Status::Prepared,
+        Status::Applied,
+        Status::Undoing,
+        Status::Undone,
+    ];
+    fn as_str(self) -> &'static str {
+        match self {
+            Status::Prepared => "prepared",
+            Status::Applied => "applied",
+            Status::Undoing => "undoing",
+            Status::Undone => "undone",
+        }
+    }
+    fn longest() -> Status {
+        Status::ALL
+            .into_iter()
+            .max_by_key(|s| s.as_str().len())
+            .unwrap_or(Status::Prepared)
+    }
+    fn recovering(self) -> bool {
+        matches!(self, Status::Prepared | Status::Undoing)
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u32,
     id: String,
-    status: String,
+    status: Status,
     context: Context,
     requests: Vec<ToggleRequest>,
     changes: Vec<Change>,
@@ -221,7 +254,6 @@ impl Journal {
         let record = journal_record::decode(&bytes.bytes)?;
         if ![1, 2, 3, 4].contains(&record.version)
             || record.id != id
-            || !["prepared", "applied", "undoing", "undone"].contains(&record.status.as_str())
             || (record.install.is_none() && record.lifecycle.is_none() && record.changes.is_empty())
             || record.changes.len() > 100
             || (record.install.is_none()
@@ -574,7 +606,7 @@ impl Application {
         let record = Record {
             version: 2,
             id: op,
-            status: "prepared".into(),
+            status: Status::Prepared,
             context: (&self.paths).into(),
             requests: normalized,
             changes,
@@ -606,14 +638,14 @@ impl Application {
             };
             OperationView {
                 operation_id: r.id,
-                status: r.status.clone(),
+                status: r.status.as_str().into(),
                 targets: r.requests,
                 changed_files: r.install.as_ref().map_or_else(
                     || r.lifecycle.as_ref().map_or(r.changes.len(), |l| l.created_count()),
                     |i| i.created_count(),
                 ),
                 action,
-                recovery: if r.status == "prepared" || r.status == "undoing" {
+                recovery: if r.status == Status::Prepared || r.status == Status::Undoing {
                     "Interrupted operation: preview undo to restore only matching published files; resolve conflicts manually without deleting the journal."
                 } else {
                     "Undo requires exact postconditions; intervening edits are preserved."
@@ -646,7 +678,7 @@ impl Application {
             install::validate_undo(self, &r)?;
             return install::plan(r, true, Some(before));
         }
-        if r.status != "undone" {
+        if r.status != Status::Undone {
             for c in &r.changes {
                 let dir = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                 if dir.chain != c.parents {
@@ -700,7 +732,7 @@ impl Application {
             return install::apply(self, plan, checkpoint);
         }
         let mut view = plan.view.clone();
-        if plan.record.changes.is_empty() || (plan.undo && plan.record.status == "undone") {
+        if plan.record.changes.is_empty() || (plan.undo && plan.record.status == Status::Undone) {
             if let Some(expected) = &plan.inventory_revision
                 && expected != &revision(crate::discovery::discover(&self.paths, 0))?
             {
@@ -724,7 +756,7 @@ impl Application {
             if Some(&current) != plan.record_before.as_ref() {
                 return Err(conflict());
             }
-            if r.status != "undoing" {
+            if r.status != Status::Undoing {
                 for c in &r.changes {
                     let d = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                     if d.chain != c.parents {
@@ -765,22 +797,19 @@ impl Application {
                     return Err(conflict());
                 }
             }
-            r.status = "undoing".into();
+            r.status = Status::Undoing;
             record_snapshot = j.save(&r, Some(&current))?;
         } else {
             if let Ok((existing, _)) = j.load(&r.id) {
-                if existing.status == "applied" {
-                    view.status = "applied".into();
+                if existing.status == Status::Applied {
+                    view.status = Status::Applied.as_str().into();
                     return Ok(view);
                 }
                 return Err(refused(
                     "Operation already has a recovery record; inspect operations and undo before retrying.",
                 ));
             }
-            if j.records()?
-                .iter()
-                .any(|r| r.status == "prepared" || r.status == "undoing")
-            {
+            if j.records()?.iter().any(|r| r.status.recovering()) {
                 return Err(refused(
                     "An interrupted operation requires recovery; inspect operations and preview undo before applying new changes.",
                 ));
@@ -932,9 +961,13 @@ impl Application {
                 d.remove_dir(&c.stage)?;
             }
         }
-        r.status = if plan.undo { "undone" } else { "applied" }.into();
+        r.status = if plan.undo {
+            Status::Undone
+        } else {
+            Status::Applied
+        };
         j.save(&r, Some(&record_snapshot))?;
-        view.status = r.status;
+        view.status = r.status.as_str().into();
         Ok(view)
     }
 }

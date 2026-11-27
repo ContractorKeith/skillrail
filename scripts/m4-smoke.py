@@ -14,6 +14,7 @@ import time
 import sys
 sys.dont_write_bytecode = True
 from smoke import command, screen_text, terminal_attributes_equal
+from pty_keys import ENTER, ESC
 
 
 def main(read_size=65536):
@@ -55,29 +56,29 @@ def main(read_size=65536):
 
             wait_for(lambda text: "Skills/MCP: 1" in text, "initial inventory")
             send(b"b", "Select exact occurrence")
-            send(b"\r", "Enter: apply")
+            send(ENTER, "Enter: apply")
             assert config.read_bytes() == original_bytes
             assert not (root / "state/journal").exists()
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             assert config.read_bytes() == original_bytes
             send(b"b", "Select exact occurrence")
-            send(b"\r", "Enter: apply")
-            send(b"\r", "applied")
+            send(ENTER, "Enter: apply")
+            send(ENTER, "applied")
             assert b"enabled = false" in config.read_bytes()
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
             wait_for(lambda text: '"action": "undo"' in text, "undo preview body")
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             assert config.read_bytes() != original_bytes
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
-            send(b"\r", "undone")
+            send(ENTER, "undone")
             assert config.read_bytes() == original_bytes
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             send(b"h", "Operation history")
             wait_for(lambda text: "Operation history" in text and "undone" in text, "undone history entry")
-            send(b"\x1b", "Skills/MCP: 1")
+            send(ESC, "Skills/MCP: 1")
             os.write(master, b"q")
             deadline = time.monotonic() + 10
             while process.poll() is None:

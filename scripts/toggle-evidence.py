@@ -10,6 +10,14 @@ import tempfile
 DESCRIPTION = 'Inspect pinned native code only; never reads agent configuration or starts a session.'
 
 CODEX_SHA = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
+LAYER_GUARD = (
+    "        if !matches!(\n"
+    "            layer.name,\n"
+    "            ConfigLayerSource::User { .. } | ConfigLayerSource::SessionFlags\n"
+    "        ) {\n"
+    "            continue;\n"
+    "        }\n"
+)
 CLAUDE_LINUX_SHA256 = "fd13c70000fec3f2116dfbcbb6121210b4a29328bf0e46210a59dd594a67d824"
 
 
@@ -62,9 +70,8 @@ fn main() {
         code.write_text(harness.replace("__RESOLVER__", resolver))
         subprocess.run(["rustc", "--edition=2024", str(code), "-o", str(binary)], check=True, timeout=30, capture_output=True)
         subprocess.run([str(binary)], check=True, timeout=10, capture_output=True)
-        guard_start = resolver.index("        if !matches!(")
-        guard_end = resolver.index("        let Some(skills_value)", guard_start)
-        unfiltered = resolver[:guard_start] + resolver[guard_end:]
+        assert resolver.count(LAYER_GUARD) == 1, "pinned resolver guard changed; re-record LAYER_GUARD from the pinned Codex source"
+        unfiltered = resolver.replace(LAYER_GUARD, "", 1)
         code.write_text(harness.replace("__RESOLVER__", unfiltered))
         subprocess.run(["rustc", "--edition=2024", str(code), "-o", str(binary)], check=True, timeout=30, capture_output=True)
         assert subprocess.run([str(binary)], timeout=10, capture_output=True).returncode != 0, "layer fixture failed to detect ignored project/system filtering"
