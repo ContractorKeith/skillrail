@@ -1,4 +1,3 @@
-//! Shared human-readable explanations. Escape every untrusted value before terminal output.
 use crate::Inventory;
 
 pub fn safe(text: &str) -> String {

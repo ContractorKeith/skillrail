@@ -1,4 +1,3 @@
-//! Versioned installation evidence, separated from enablement and runtime visibility.
 use crate::{
     Inventory, Paths,
     discovery::{Agent, Scope},

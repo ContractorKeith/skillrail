@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Inspect pinned native code only; never reads agent configuration or starts a session."""
 import argparse
 import hashlib
 import json
@@ -8,12 +7,13 @@ import subprocess
 import urllib.request
 import tempfile
 
+DESCRIPTION = 'Inspect pinned native code only; never reads agent configuration or starts a session.'
+
 CODEX_SHA = "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856"
 CLAUDE_LINUX_SHA256 = "fd13c70000fec3f2116dfbcbb6121210b4a29328bf0e46210a59dd594a67d824"
 
 
 def check_skill_rule_layers(source):
-    """Compile the exact pinned resolver with small typed fixture collaborators."""
     text = source.decode()
     start = text.index("pub fn skill_config_rules_from_stack(")
     brace = text.index("{", start)
@@ -55,7 +55,6 @@ fn main() {
     assert_eq!(skill_config_rules_from_stack(&stack).entries, vec![SkillConfigRule { selector: "demo".into(), enabled: true }]);
 }
 '''
-    # The native function supplies the policy; fixtures only supply typed layers/data.
     with tempfile.TemporaryDirectory(prefix="sr-layers-") as directory:
         root = Path(directory)
         code = root / "layers.rs"
@@ -63,7 +62,6 @@ fn main() {
         code.write_text(harness.replace("__RESOLVER__", resolver))
         subprocess.run(["rustc", "--edition=2024", str(code), "-o", str(binary)], check=True, timeout=30, capture_output=True)
         subprocess.run([str(binary)], check=True, timeout=10, capture_output=True)
-        # Prove the fixture detects removal of the layer restriction.
         guard_start = resolver.index("        if !matches!(")
         guard_end = resolver.index("        let Some(skills_value)", guard_start)
         unfiltered = resolver[:guard_start] + resolver[guard_end:]
@@ -74,7 +72,7 @@ fn main() {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--claude-binary", type=Path, required=True, help="exact native Claude 2.1.316 executable (not a version-manager wrapper)")
     args = parser.parse_args()
     version = subprocess.check_output([str(args.claude_binary), "--version"], timeout=15, text=True).strip()

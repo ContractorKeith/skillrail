@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Run the validator through a fake brew boundary that models autoremove.
-
-Uses the real built Skillrail for installed-binary smokes; no real tap.
-The fake package manager models cleanup, not artifact extraction.
-"""
 import os
 import json
 from pathlib import Path
@@ -69,7 +64,6 @@ if args[0] in ("install", "uninstall") and os.environ.get("HOMEBREW_NO_INSTALL_C
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                        TMPDIR=str(root), BREW_TEST_PREFIX=str(prefix),
                        BREW_TEST_UNRELATED=str(unrelated), BREW_TEST_STALE=str(stale))
-            # Do not inherit a setting that could mask a missing script guard.
             env.pop("HOMEBREW_NO_AUTOREMOVE", None)
             env.pop("HOMEBREW_NO_INSTALL_CLEANUP", None)
             result = subprocess.run(["bash", "scripts/validate-brew.sh", str(assets)],

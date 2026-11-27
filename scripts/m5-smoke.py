@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""M5 real PTY source/selection/preview/cancel/apply/history/undo. No agent sessions or user paths."""
 import fcntl
 import argparse
 import json
@@ -21,7 +20,6 @@ def main(read_size=65536):
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
-    # Build caches may have writable ancestors; mutation fixtures need trusted paths.
     with tempfile.TemporaryDirectory(prefix="m5-") as directory:
         root = Path(directory).resolve()
         (root / "home").mkdir()
@@ -41,7 +39,6 @@ def main(read_size=65536):
             process = subprocess.Popen(command(binary, root) + ["tui"], stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
 
             def frame_end():
-                # Pinned Ratatui/Crossterm emits Hide after each complete draw.
                 marker = b"\x1b[?25l"
                 at = output.rfind(marker)
                 return at + len(marker) if at >= 0 else 0
@@ -68,7 +65,6 @@ def main(read_size=65536):
 
             def preview_install():
                 send(b"i", "Install snapshot")
-                # Source, local kind, default ref, explicit skill, default Codex, user scope.
                 os.write(master, str(source).encode() + b"\r\r\rselected\r\r\r")
                 wait_for(lambda text: "Enter: apply" in text, "install preview")
 

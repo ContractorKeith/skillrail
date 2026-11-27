@@ -1,4 +1,3 @@
-//! Shared guarded visibility mutations. Public views cannot serialize recovery content.
 pub(crate) mod install;
 mod journal_record;
 pub use crate::install_source::InstallRequest;
@@ -132,7 +131,6 @@ pub struct FileChangeView {
     pub path: PathBuf,
     pub action: &'static str,
 }
-/// Contains private snapshots; deliberately has no Debug or Serialize implementation.
 pub struct Plan {
     record: Record,
     view: PlanView,
@@ -167,7 +165,6 @@ struct Journal {
 }
 impl Drop for Journal {
     fn drop(&mut self) {
-        // Explicit unlock also releases descriptions briefly inherited by an unrelated fork.
         let _ = self._lock.unlock();
     }
 }
@@ -194,7 +191,6 @@ impl Journal {
         if m.permissions().mode() & 0o777 != 0o700 {
             return Err(journal_error());
         }
-        // Lock alias/replacement after acquisition must not split cooperating processes.
         if self.dir.read("lock", true)?.is_none() {
             return Err(journal_error());
         }
@@ -352,7 +348,6 @@ impl Application {
     pub fn plan_toggle(&self, request: ToggleRequest) -> Result<Plan, AppError> {
         self.plan_toggles(vec![request])
     }
-    /// Batch seam for recoverable changes to several files. No filesystem transaction claim.
     pub fn plan_toggles(&self, requests: Vec<ToggleRequest>) -> Result<Plan, AppError> {
         if requests.is_empty() || requests.len() > 100 {
             return Err(AppError::new(
@@ -412,7 +407,6 @@ impl Application {
                     "Target schema or metadata is uncertain; resolve its inventory diagnostics before toggling.",
                 ));
             }
-            // Native selectors may address multiple physical occurrences. Never silently widen a selection.
             let same = inventory
                 .occurrences
                 .iter()
@@ -435,7 +429,6 @@ impl Application {
                 if o.mcp.is_some() {
                     o.original_path.clone()
                 } else {
-                    // The native skill-rule resolver ignores project configuration layers.
                     self.paths.home.join(".codex/config.toml")
                 }
             } else if o.mcp.is_some() {
@@ -654,7 +647,6 @@ impl Application {
             return install::plan(r, true, Some(before));
         }
         if r.status != "undone" {
-            // Validate the complete set before restoring any file.
             for c in &r.changes {
                 let dir = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                 if dir.chain != c.parents {
@@ -693,8 +685,6 @@ impl Application {
     pub fn apply(&self, plan: &Plan) -> Result<PlanView, AppError> {
         self.apply_with_checkpoint(plan, |_| Ok(()))
     }
-    /// Deterministic interruption/race seam; no environment flag or production bypass.
-    /// A checkpoint error leaves the same durable recovery state as process termination.
     pub fn apply_with_checkpoint(
         &self,
         plan: &Plan,
@@ -722,8 +712,6 @@ impl Application {
             view.status = "unchanged".into();
             return Ok(view);
         }
-        // Reject an already-stale selection before creating a private journal/lock.
-        // These optimistic checks are repeated under the application lock below.
         if !plan.undo {
             self.revalidate_forward(plan)?;
         }
@@ -737,7 +725,6 @@ impl Application {
                 return Err(conflict());
             }
             if r.status != "undoing" {
-                // Plan restoration once; retain every staged/restored inode across retries.
                 for c in &r.changes {
                     let d = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                     if d.chain != c.parents {
@@ -835,15 +822,12 @@ impl Application {
                 let existing = staging.read("replacement", false)?;
                 if let Some(stage) = &existing {
                     if !plan.undo
-                        // An unrecorded write may have stopped at any prefix. Only
-                        // recorded stages require the complete durable snapshot.
                         || !c.after.starts_with(&stage.bytes)
                         || c.published.as_ref().is_some_and(|p| p != stage)
                     {
                         return Err(conflict());
                     }
                 } else if c.published.is_some() {
-                    // A recorded stage cannot disappear without an observed publication/edit.
                     return Err(conflict());
                 }
                 let mode = if plan.undo {
@@ -866,11 +850,8 @@ impl Application {
                     c.before.as_ref().map(Snapshot::group)
                 };
                 let staged = if c.published.is_some() {
-                    // Reuse the durable inode. Recreating it before saving new evidence can
-                    // strand recovery if the process dies during the replacement's fsync.
                     existing.ok_or_else(conflict)?
                 } else {
-                    // No identity was committed yet; an interrupted initial stage can be rebuilt.
                     if existing.is_some() {
                         staging.remove("replacement")?;
                     }
@@ -911,7 +892,6 @@ impl Application {
                 dir.remove_dir(&c.stage)?;
             }
             checkpoint(Checkpoint::Published(i))?;
-            // Revalidate path binding after publication; recovery retains exact stage identity.
             let reopened = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
             if reopened.chain != c.parents
                 || reopened.read(filename(&c.path)?, false)?
@@ -921,7 +901,6 @@ impl Application {
             }
         }
         if plan.undo {
-            // Unrecorded forward writes can leave a prefix; recorded stages must match exactly.
             for c in &r.changes {
                 let d = Directory::open(c.path.parent().ok_or_else(journal_error)?)?;
                 if d.chain != c.parents {
@@ -1064,7 +1043,6 @@ fn validate_skills(input: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-// Absence in a project file is inheritance, not an explicit native "on" rule.
 fn claude_project_default_on(
     paths: &Paths,
     name: &str,

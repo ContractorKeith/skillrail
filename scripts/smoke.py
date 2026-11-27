@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Executable CLI and PTY checks; all application paths are disposable fixtures."""
 import copy
 import fcntl
 import json
@@ -19,8 +18,6 @@ import time
 
 
 def terminal_attributes_equal(before, after):
-    # Darwin sets PENDIN when restoring canonical mode, even with tcsetattr
-    # given the exact saved attributes. It is transient pending-input state.
     before, after = before[:], after[:]
     if sys.platform == "darwin":
         before[3] &= ~termios.PENDIN
@@ -64,7 +61,6 @@ def cli_smoke(binary, root):
 
 
 def screen_text(data, rows=16, columns=100):
-    """Replay cursor-positioned terminal deltas for assertions on visible text."""
     screen = [[" "] * columns for _ in range(rows)]
     row = column = 0
     for match in re.finditer(r"\x1b\[[0-?]*[ -/]*[@-~]|[^\x1b]", data.decode("utf-8", errors="replace")):
@@ -110,7 +106,6 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 connection.execute("PRAGMA user_version = 999")
             os.write(master, b"r")
         else:
-            # Exercise a real successful refresh, selection and resize before quitting.
             added = root / "project/.agents/skills/refreshed"
             added.mkdir()
             (added / "SKILL.md").write_text("---\nname: refreshed\ndescription: Added after startup\n---\n")
@@ -123,7 +118,6 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 refreshed = len(json.loads(row[0])["items"]) == 4
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
-            # Search is typed through the real PTY, then Enter opens matching details.
             os.write(master, b"/refreshed\r")
             while "Search: refreshed |" not in screen_text(output) or "Added after startup" not in screen_text(output):
                 assert time.monotonic() < deadline, "TUI search did not select matching details"
@@ -142,15 +136,12 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
             if exit_backpressure:
-                # Queue enough redraws to fill a PTY unless the parent drains it.
                 os.write(master, b"\x1b[6~\x1b[5~" * 100)
             if resize_quit:
                 os.kill(process.pid, signal.SIGWINCH)
             if before_quit is not None:
                 before_quit(process)
             os.write(master, b"q")
-        # Keep draining while waiting: redraw/restoration writes can fill a
-        # PTY, especially on macOS, and otherwise prevent the child from exiting.
         exit_deadline = time.monotonic() + 10
         while process.poll() is None:
             assert time.monotonic() < exit_deadline, "TUI did not exit while output was drained"

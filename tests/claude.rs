@@ -1,4 +1,3 @@
-//! Executable Claude compatibility regressions. Git runs only to create disposable fixtures.
 use serde_json::Value;
 use std::{
     fs,
@@ -176,7 +175,6 @@ fn linked_worktree_uses_claude_main_checkout_only_when_root_skills_are_missing()
     );
     assert_eq!(occurrence["visibility"]["status"], "unknown");
     assert_eq!(snapshot(&[&f.home, &f.main, &f.linked]), before);
-    // Even an empty present directory suppresses fallback, not merely a matching skill.
     fs::create_dir_all(f.linked.join(".claude/skills")).unwrap();
     assert!(f.scan()["items"].as_array().unwrap().is_empty());
     skill(&f.linked, ".claude/skills/local", "local");
@@ -251,7 +249,6 @@ fn unsafe_or_unreadable_linked_metadata_reports_uncertainty_without_fallback() {
             .contains("worktree_fallback_unknown")
     );
     fs::write(admin.join("commondir"), &commondir).unwrap();
-    // Final metadata links cannot redirect reads into arbitrary content.
     fs::remove_file(admin.join("commondir")).unwrap();
     std::os::unix::fs::symlink("gitdir", admin.join("commondir")).unwrap();
     assert!(
@@ -316,7 +313,6 @@ fn claude_invocation_alias_precedence_does_not_suppress_distinct_frontmatter_nam
         })
         .collect();
     let item_id = occurrence["item_id"].clone();
-    // A personal frontmatter name can overlap a project folder alias as well.
     skill(&home, ".claude/skills/deploy", "project-alias");
     let second = run();
     let occurrence = second["occurrences"]
@@ -382,7 +378,6 @@ fn linked_nested_project_and_relative_metadata_keep_agent_specific_discovery() {
             .any(|i| i["name"] == "codex-main")
     );
     assert_eq!(snapshot(&[&f.home, &f.main, &f.linked]), before);
-    // An invalid present root never authorizes main-checkout fallback.
     std::os::unix::fs::symlink("missing", f.linked.join(".claude")).unwrap();
     assert!(
         f.scan()["diagnostics"]

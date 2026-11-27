@@ -1,4 +1,3 @@
-//! Observe bounded plugin caches, without selecting a native installation or following lifecycle hooks.
 use crate::{
     Inventory, Paths,
     discovery::{Agent, Item, Occurrence, Scope, Visibility},
@@ -174,7 +173,6 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
             loading.exhausted = true;
         }
     }
-    // Claude also documents plugins installed in its skills directory.
     let roots = [
         (Scope::User, paths.home.join(".claude/skills")),
         (Scope::Project, paths.project.join(".claude/skills")),
@@ -185,8 +183,6 @@ pub fn discover(paths: &Paths, inventory: &mut Inventory) {
         if !seen.insert(root.clone()) {
             continue;
         }
-        // M1 already diagnoses unreadable standalone roots. Inspect plugin candidates
-        // only, so ordinary skill aliases do not produce plugin-link diagnostics.
         if let Ok(entries) = fs::read_dir(&root) {
             for entry in entries.take(1001).flatten() {
                 if budget == 0 {
@@ -349,7 +345,6 @@ fn inspect(
             ".codex-plugin/plugin.json"
         })
     };
-    // Only validated installation evidence supplies identity without a manifest.
     let manifestless = agent == Agent::Claude && installed_name.is_some() && mcp::absent(&manifest);
     if !manifestless
         && !manifest
@@ -474,13 +469,9 @@ fn inspect(
             loading,
         );
     }
-    if portable {
-        // Portable components stay canonical; overlay is not an additional MCP source.
-        // Unsupported OpenAI overlays are diagnosed without emitting their raw values.
-        if value.get("extensions").is_some_and(|v| !v.is_object()) {
-            incomplete = true;
-            mcp::problem(inventory, "plugin_overlay_unknown", &manifest, agent, scope);
-        }
+    if portable && value.get("extensions").is_some_and(|v| !v.is_object()) {
+        incomplete = true;
+        mcp::problem(inventory, "plugin_overlay_unknown", &manifest, agent, scope);
     }
     for (name, (entry, path)) in entries {
         mcp::add_server(

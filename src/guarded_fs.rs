@@ -1,4 +1,3 @@
-//! Descriptor-relative Unix I/O. Recovery bytes are never read through unchecked aliases.
 use crate::{AppError, mutation::refused};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,7 +47,6 @@ fn cstr(s: &std::ffi::OsStr) -> Result<CString, AppError> {
 fn open_at(parent: &File, name: &std::ffi::OsStr, flags: i32, mode: u32) -> std::io::Result<File> {
     let name = CString::new(name.as_bytes())
         .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    // C variadic arguments require integer promotion; Darwin mode_t is only u16.
     let promoted_mode: libc::c_uint = mode;
     // SAFETY: parent remains open; name is NUL-terminated, flags/mode are OS constants.
     let fd = unsafe {
@@ -86,7 +84,6 @@ impl Directory {
             file = open_at(&file, name, libc::O_RDONLY | libc::O_DIRECTORY, 0)
                 .map_err(|_| unsafe_path())?;
             let m = file.metadata().map_err(|_| io_error())?;
-            // Root-owned sticky temporary roots are allowed; descendants must be trusted.
             let sticky_root = m.uid() == 0 && m.mode() & 0o1000 != 0;
             if (!owned(&m) && m.uid() != 0) || (m.mode() & 0o022 != 0 && !sticky_root) {
                 return Err(unsafe_path());
@@ -241,7 +238,6 @@ impl Directory {
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
             .map_err(|_| io_error())?;
-        // The containing staging directory remains private while original metadata is restored.
         if let Some(group) = group {
             // SAFETY: live descriptor; -1 preserves the current owner, gid came from the original file.
             if unsafe { libc::fchown(file.as_raw_fd(), !0 as libc::uid_t, group as libc::gid_t) }
@@ -250,7 +246,6 @@ impl Directory {
                 return Err(io_error());
             }
         }
-        // Preserve ordinary permission bits inside the private staging directory.
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(mode))
             .map_err(|_| io_error())?;
@@ -364,7 +359,6 @@ pub(crate) struct Snapshot {
     pub(crate) bytes: Vec<u8>,
 }
 impl Snapshot {
-    // Serialization-only upper bound; never used as a filesystem pre/postcondition.
     pub(crate) fn reservation(bytes: &[u8]) -> Self {
         Self {
             identity: Identity {
@@ -390,12 +384,9 @@ pub(crate) fn filename(path: &Path) -> Result<&str, AppError> {
         .ok_or_else(unsafe_path)
 }
 
-// Conservative ACL boundary: Unix permission bits alone do not describe Darwin ACL grants.
-// Refuse ACL-bearing mutation paths instead of dropping ACLs or claiming mode bits prove privacy.
 #[cfg(target_os = "macos")]
 fn no_extended_acl(file: &File) -> Result<(), AppError> {
     use std::ffi::c_void;
-    // Darwin sys/acl.h: acl_t/acl_entry_t are opaque pointers, acl_type_t is an enum.
     unsafe extern "C" {
         fn acl_get_fd_np(fd: i32, acl_type: i32) -> *mut c_void;
         fn acl_get_entry(acl: *mut c_void, entry_id: i32, entry: *mut *mut c_void) -> i32;
@@ -404,7 +395,6 @@ fn no_extended_acl(file: &File) -> Result<(), AppError> {
     // SAFETY: file fd is live; ACL_TYPE_EXTENDED is the documented Darwin value.
     let acl = unsafe { acl_get_fd_np(file.as_raw_fd(), 0x100) };
     if acl.is_null() {
-        // Darwin filesec_get_property reports ENOENT when no ACL property exists.
         if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
             return Ok(());
         }

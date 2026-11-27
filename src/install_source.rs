@@ -1,4 +1,3 @@
-//! Explicit sources only. Git plumbing reads objects in an isolated bare repository.
 use crate::{AppError, files, guarded_fs::Directory, mutation::refused};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -94,7 +93,6 @@ fn git_reference(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"/._-".contains(&b))
 }
 pub(crate) fn hash(entries: &[Entry]) -> String {
-    // Stable sorted representation includes paths, bytes and meaningful executable bits.
     files::id(&[
         "skillrail-snapshot-v1",
         &serde_json::to_string(entries).expect("entry serialization"),
@@ -155,7 +153,6 @@ pub(crate) fn collect(r: &InstallRequest) -> Result<Source, AppError> {
     })
 }
 
-// One selected-tree representation is admitted by every source and journal path.
 pub(super) fn validate_entries(entries: &[Entry]) -> Result<(), AppError> {
     let mut nodes = std::collections::BTreeMap::new();
     let mut folded = std::collections::BTreeSet::new();

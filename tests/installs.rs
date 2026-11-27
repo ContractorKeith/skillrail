@@ -128,7 +128,6 @@ fn local_git_exact_revision_selection_and_hostile_config_are_inert() {
         ],
     );
     let canary = f.path("executed");
-    // These are executable hostile inputs; the install must never invoke them.
     fs::write(f.path("source/.gitattributes"), "SKILL.md filter=evil\n").unwrap();
     git(&f, &["add", ".gitattributes"]);
     git(
@@ -1284,8 +1283,6 @@ fn last_publication_rechecks_case_alias_and_native_name_collisions() {
             Ok(())
         });
         assert!(result.is_err(), "late {kind} collision was accepted");
-        // On case-insensitive filesystems `demo` resolves to the injected DEMO.
-        // Check actual directory entries and type, rather than alias lookup.
         let names: Vec<_> = fs::read_dir(&root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())

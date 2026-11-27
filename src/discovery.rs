@@ -1,4 +1,3 @@
-//! Standalone skill adapters. Unsupported runtime restrictions remain explicit uncertainty.
 use crate::{
     Diagnostic, Discovery, Inventory, Paths, files,
     fingerprint::{self, Fingerprint},
@@ -112,7 +111,6 @@ fn access_category(error: &std::io::Error) -> &'static str {
 pub fn discover(paths: &Paths, timestamp: u64) -> Inventory {
     discover_with_roots(paths, timestamp).0
 }
-/// Explicit evidence for mutation admission; generic coverage_partial is separate.
 pub(crate) struct SkillRootScan {
     pub agent: Agent,
     pub scope: Scope,
@@ -179,7 +177,6 @@ pub(crate) fn discover_with_roots(
     let mut seen = BTreeSet::new();
     let mut root_scans = vec![];
     for (agent, scope, root) in roots {
-        // Home can equal project: the same location is not a second installation.
         if !seen.insert((format!("{agent:?}"), root.clone())) {
             continue;
         }
@@ -271,7 +268,6 @@ pub(crate) fn discover_with_roots(
                 .canonicalize()
                 .ok()
                 .filter(|p| p.is_dir() && p.to_str().is_some());
-            // A direct ordinary directory without SKILL.md is not a skill. Broken links remain rows.
             if let Some(path) = &canonical {
                 match fs::symlink_metadata(path.join("SKILL.md")) {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound && !link => {
@@ -531,7 +527,6 @@ pub(crate) fn discover_with_roots(
 
 pub fn project_ancestors(project: &Path) -> Vec<PathBuf> {
     let mut result = vec![];
-    // Without a repository boundary, only the explicit selected project is supported.
     let boundary = project
         .ancestors()
         .find(|p| fs::symlink_metadata(p.join(".git")).is_ok());
@@ -544,7 +539,6 @@ pub fn project_ancestors(project: &Path) -> Vec<PathBuf> {
     result
 }
 
-// A missing child beneath a dangling link is a failed root, not ordinary absence.
 fn confirmed_absent(path: &Path) -> bool {
     for parent in path.ancestors() {
         match fs::symlink_metadata(parent) {

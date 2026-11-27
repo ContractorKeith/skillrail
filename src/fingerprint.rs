@@ -1,4 +1,3 @@
-//! Versioned full-folder fingerprints; internal links are recorded, never traversed.
 use crate::files;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -100,7 +99,6 @@ fn walk(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        // Execution bits affect scripts; timestamps, UID and write bits do not define content.
         field(hash, &(metadata.permissions().mode() & 0o111).to_le_bytes());
     }
     if metadata.is_symlink() {

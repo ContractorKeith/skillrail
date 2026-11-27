@@ -1,4 +1,3 @@
-//! Transient configuration parsing. Only allowlisted facts cross this module's boundary.
 use crate::{
     Diagnostic, Inventory, Paths,
     discovery::{Agent, Item, Occurrence, Scope, Visibility},
@@ -105,11 +104,9 @@ pub(super) fn config(path: &Path, agent: Agent) -> Result<Value, ()> {
     if agent == Agent::Claude {
         return json(path);
     }
-    // Deserialize into a transient tree; never serialize a raw configuration.
     toml::from_str(&files::text(path, 128 * 1024)?).map_err(|_| ())
 }
 pub(super) fn absent(path: &Path) -> bool {
-    // A dangling or inaccessible ancestor is not evidence of absence.
     for parent in path.ancestors() {
         match fs::symlink_metadata(parent) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -394,7 +391,6 @@ fn sanitize(
         let Some(text) = value.as_str() else {
             return invalid();
         };
-        // Validate only the structural minimum without retaining any URL fragment.
         let prefixes: &[&str] = if matches!(transport, Transport::Websocket) {
             &["ws://", "wss://"]
         } else {

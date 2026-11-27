@@ -116,7 +116,6 @@ fn lifecycle_plans_refuse_another_journal_before_any_mutation() {
                 .unwrap(),
             );
             if copy_journal {
-                // Preserve private modes while reproducing an ordinary copied journal.
                 let status = Command::new("cp")
                     .args(["-Rp"])
                     .arg(f.path("state/journal"))
@@ -147,7 +146,6 @@ fn lifecycle_plans_refuse_another_journal_before_any_mutation() {
             if !copy_journal {
                 assert!(!f.path("other-state/journal").exists());
             }
-            // Refusal must leave the original plan usable and recoverable.
             let applied = a.apply(&plan).unwrap();
             a.apply(&a.plan_undo(&applied.operation_id).unwrap())
                 .unwrap();
@@ -410,7 +408,6 @@ fn lifecycle_edits_ownership_and_incomplete_consumers_refuse_without_changes() {
             )
             .unwrap(),
             "case" => {
-                // Two renames retain the inode and work on case-insensitive filesystems too.
                 fs::rename(f.path("home/.agents/skills/demo"), f.path("held-case-link")).unwrap();
                 fs::rename(f.path("held-case-link"), f.path("home/.agents/skills/DEMO")).unwrap();
             }
@@ -790,7 +787,6 @@ int renameat2(int a,const char *s,int b,const char *t,unsigned flags){int (*real
                 .find(|o| o.status == "prepared")
                 .unwrap()
                 .operation_id;
-            // Every original rename is interrupted in a different real process; retries preserve progress.
             for _ in 0..4 {
                 let out = run(&["undo", op, "--apply", "--json"], "restore");
                 assert!(

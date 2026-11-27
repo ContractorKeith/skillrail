@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Optional native schema probe. Uses a disposable local marketplace and config home."""
 import json
 import os
 from pathlib import Path
@@ -30,16 +29,12 @@ def main():
             "name": "fixture-market", "owner": {"name": "Fixture"},
             "plugins": [{"name": name, "source": "./" + name} for name in names],
         })
-        # HOME and CODEX_HOME retain their inherited values. Claude's documented
-        # config-directory override isolates all native configuration writes.
         env = {key: value for key, value in os.environ.items()
                if not key.startswith("GIT_") and not any(part in key.upper() for part in ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "AUTH"))}
         env.update(CLAUDE_CONFIG_DIR=str(home / ".claude"),
                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
                    DISABLE_AUTOUPDATER="1", DISABLE_TELEMETRY="1",
                    GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-        # A fixture repository boundary prevents Skillrail's ancestor discovery
-        # from reaching the author's worktree while replaying native records.
         subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "init", "-q", str(project)],
                        env=env, check=True, capture_output=True)
 

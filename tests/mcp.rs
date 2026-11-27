@@ -306,7 +306,6 @@ fn cached_plugins_supply_owned_skills_and_mcp_with_unknown_activation() {
         );
     }
     let result = scan(p);
-    // Claude adds declared skill roots to default; Codex compatibility manifest selects the declared root.
     assert_eq!(result["occurrences"].as_array().unwrap().len(), 7);
     let rows = result["occurrences"].as_array().unwrap();
     assert!(
@@ -328,7 +327,6 @@ fn cached_plugins_supply_owned_skills_and_mcp_with_unknown_activation() {
         4
     );
     assert!(!result.to_string().contains("CANARY_"));
-    // Native source content stays untouched, including credentials and scripts.
     assert!(
         fs::read_to_string(p.join("home/.claude/plugins/cache/market/demo/1.0/.mcp.json"))
             .unwrap()
@@ -448,7 +446,6 @@ fn mcp_cli_tui_and_cache_share_safe_details_without_execution_or_network() {
     }
     let bytes = fs::read(p.join("state/index.sqlite3")).unwrap();
     assert!(!bytes.windows(7).any(|s| s == b"CANARY_"));
-    // Malformed input can contain a credential in the parser's context; never echo it.
     write(p, "home/.claude.json", "{CANARY_PARSE");
     let malformed = scan(p);
     assert!(malformed.to_string().contains("mcp_config_unknown"));
@@ -484,7 +481,6 @@ fn plugin_selection_observations_preserve_unknown_scope_and_runtime_visibility()
         assert_eq!(row["scope"], "unknown");
         assert_eq!(row["visibility"]["status"], "unknown");
     }
-    // A project observation is not automatically a trusted override.
     write(
         p,
         "project/.codex/config.toml",
@@ -1185,7 +1181,6 @@ fn plugin_loading_has_cumulative_entry_declaration_and_byte_budgets() {
     );
     assert_eq!(snapshot(p), before);
     assert!(!result.to_string().contains("CANARY_BUDGET"));
-    // Repeated empty files and nested arrays consume declarations/reads, not just unique entries.
     write(p, &format!("{base}/empty.json"), r#"{"mcpServers":{}}"#);
     write(
         p,
@@ -1254,7 +1249,6 @@ fn plugin_read_bytes_and_candidate_limits_apply_across_the_scan() {
         1
     );
     assert!(!result.to_string().contains("CANARY_BYTES"));
-    // The same scan-wide entry budget applies when no individual plugin exceeds it.
     fs::remove_dir_all(p.join("home/.claude/plugins/cache")).unwrap();
     for plugin in 0..12 {
         let entries: serde_json::Map<_, _> = (0..100)

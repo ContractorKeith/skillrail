@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Build native release candidates, verify archives, and render asset-bound tap proposals."""
 import argparse
 import gzip
 import hashlib
@@ -18,6 +17,8 @@ import tempfile
 import tomllib
 import zlib
 
+DESCRIPTION = 'Build native release candidates, verify archives, and render asset-bound tap proposals.'
+
 if not __debug__:
     raise RuntimeError("Evidence checks require Python assertions; remove -O/PYTHONOPTIMIZE")
 
@@ -28,7 +29,6 @@ TARGETS = {
     "x86_64-apple-darwin": ("macos", "on_intel"),
     "aarch64-apple-darwin": ("macos", "on_arm"),
 }
-# Expected (format, machine) of the packaged executable: ELF e_machine or Mach-O cputype.
 EXECUTABLES = {
     "x86_64-unknown-linux-gnu": ("ELF", 62),
     "aarch64-unknown-linux-gnu": ("ELF", 183),
@@ -66,7 +66,6 @@ def cargo_version():
 
 
 def checked_epoch(value):
-    """SOURCE_DATE_EPOCH as an int the tar format can hold, or one sentence."""
     if isinstance(value, str) and re.fullmatch(r"[0-9]{1,11}", value):
         value = int(value)
     if type(value) is not int or not 0 <= value <= MAX_EPOCH:
@@ -75,14 +74,12 @@ def checked_epoch(value):
 
 
 def check_tmpdir():
-    """tempfile silently falls back to /tmp when TMPDIR is wrong; refuse instead."""
     scratch = os.environ.get("TMPDIR")
     if scratch and not Path(scratch).is_dir():
         raise ValueError(f"TMPDIR {scratch} is not an existing directory; create it first")
 
 
 def executable_kind(data):
-    """(format, machine) for 64-bit little-endian ELF and Mach-O headers, else None."""
     if data[:4] == b"\x7fELF" and len(data) >= 20 and data[4] == 2 and data[5] == 1:
         return "ELF", struct.unpack_from("<H", data, 18)[0]
     if data[:4] == b"\xcf\xfa\xed\xfe" and len(data) >= 8:
@@ -109,7 +106,6 @@ def archive_name(version, target):
 
 
 def smoke(binary, version):
-    """Run only against a disposable inventory with its own Git boundary."""
     check_tmpdir()
     reported = command([binary, "version"]).strip()
     assert reported == f"skillrail {version}", f"binary reports {reported!r}, expected 'skillrail {version}'"
@@ -134,14 +130,12 @@ def smoke(binary, version):
 
 
 def package(binary, output, target, version, epoch):
-    """Deterministic envelope for identical binary/license/metadata inputs."""
     name = archive_name(version, target)
     epoch = checked_epoch(epoch)
     metadata = {"version": version, "target": target, "source_date_epoch": epoch}
     files = {"skillrail": binary.read_bytes(), "LICENSE": (ROOT / "LICENSE").read_bytes(),
              "BUILD.json": (json.dumps(metadata, sort_keys=True) + "\n").encode()}
     files["SHA256SUMS"] = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(files.items())).encode()
-    # No source paths, build environment or wall clock in the gzip/tar envelope.
     buffer = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=buffer, mtime=0) as zipped:
         with tarfile.open(fileobj=zipped, mode="w", format=tarfile.USTAR_FORMAT) as tar:
@@ -151,8 +145,6 @@ def package(binary, output, target, version, epoch):
                 info.mode = 0o755 if entry == "skillrail" else 0o644
                 tar.addfile(info, io.BytesIO(data))
     content = buffer.getvalue()
-    # Nothing touches the output directory until the whole archive exists; the
-    # final names appear by rename, so a failure never leaves a partial artifact.
     output.mkdir(parents=True, exist_ok=True)
     archive = output / name
     sidecar = archive.with_suffix(archive.suffix + ".sha256")
@@ -173,8 +165,6 @@ def package(binary, output, target, version, epoch):
 
 
 def read_members(zipped, limits):
-    """Fixed USTAR records only; TarFile.getmembers would follow PAX/GNU extensions
-    before returning a member. Our generator emits plain USTAR."""
     files = {}
     for _ in range(5):
         header = zipped.read(512)
@@ -203,10 +193,6 @@ def read_members(zipped, limits):
 
 
 def verify(archive, run=False, version=None):
-    """Verify bounded USTAR records before reading any declared payload.
-
-    The version must be the checkout's Cargo.toml version unless given.
-    """
     version = version or cargo_version()
     limits = {"skillrail": 100 * 1024 * 1024, "BUILD.json": 65536,
               "LICENSE": 65536, "SHA256SUMS": 65536}
@@ -260,7 +246,6 @@ def verify(archive, run=False, version=None):
 
 
 def formula(assets, version, local_target=None):
-    """Full proposal requires four actual archives. Local proposal tests one host."""
     targets = [local_target] if local_target else list(TARGETS)
     blocks = []
     for target in targets:
@@ -299,7 +284,6 @@ end
 
 
 def describe(error):
-    """One line for a refusal; the cause is the message, never a stack."""
     if isinstance(error, subprocess.CalledProcessError):
         lines = (error.stderr or "").strip().splitlines()
         detail = f": {lines[-1]}" if lines else ""
@@ -338,7 +322,7 @@ def run(args, parser):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--debug", action="store_true", help="show tracebacks for refusals")
     commands = parser.add_subparsers(dest="action", required=True)
     build = commands.add_parser("build")

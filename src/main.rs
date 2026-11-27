@@ -10,13 +10,13 @@ mod output;
     about = "Local-first skill and MCP registry with reversible visibility changes"
 )]
 struct Cli {
-    /// Selected home directory (defaults to HOME).
+    #[arg(help = "Selected home directory (defaults to HOME)")]
     #[arg(long, global = true)]
     home: Option<PathBuf>,
-    /// Selected project directory (defaults to the current directory).
+    #[arg(help = "Selected project directory (defaults to the current directory)")]
     #[arg(long, global = true)]
     project: Option<PathBuf>,
-    /// Application state directory (see docs/CLI.md for platform defaults).
+    #[arg(help = "Application state directory (see docs/CLI.md for platform defaults)")]
     #[arg(long, global = true)]
     state_dir: Option<PathBuf>,
     #[command(subcommand)]
@@ -25,23 +25,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Print the application version without opening state.
+    #[command(about = "Print the application version without opening state")]
     Version,
-    /// Interactive skill and MCP inventory (requires a terminal).
+    #[command(about = "Interactive skill and MCP inventory (requires a terminal)")]
     Tui,
-    /// Fresh skill, MCP and plugin inventory and explanations.
+    #[command(about = "Fresh skill, MCP and plugin inventory and explanations")]
     Scan {
         #[arg(long)]
         json: bool,
     },
-    /// Fresh skill, MCP and plugin inventory and explanations.
+    #[command(about = "Fresh skill, MCP and plugin inventory and explanations")]
     List {
         #[arg(long)]
         json: bool,
         #[command(flatten)]
         query: skillrail::query::Query,
     },
-    /// Search names, descriptions and IDs (case insensitive).
+    #[command(about = "Search names, descriptions and IDs (case insensitive)")]
     Search {
         query: String,
         #[arg(long)]
@@ -49,35 +49,35 @@ enum Commands {
         #[command(flatten)]
         filters: skillrail::query::Query,
     },
-    /// Inspect one stable item ID.
+    #[command(about = "Inspect one stable item ID")]
     Show {
         id: String,
         #[arg(long)]
         json: bool,
     },
-    /// List drifted skills and skills with unknown drift.
+    #[command(about = "List drifted skills and skills with unknown drift")]
     Drift {
         #[arg(long)]
         json: bool,
         #[command(flatten)]
         query: skillrail::query::Query,
     },
-    /// Preview enabling a supported occurrence; writes only with --apply.
+    #[command(about = "Preview enabling a supported occurrence; writes only with --apply")]
     Enable(ToggleArgs),
-    /// Preview an owned snapshot and selected links; writes only with --apply.
+    #[command(about = "Preview an owned snapshot and selected links; writes only with --apply")]
     Install(InstallArgs),
-    /// Preview reacquisition of an owned snapshot from its declared source.
+    #[command(about = "Preview reacquisition of an owned snapshot from its declared source")]
     Update(OwnedArgs),
-    /// Preview removal of verified owned content and links.
+    #[command(about = "Preview removal of verified owned content and links")]
     Uninstall(OwnedArgs),
-    /// Preview disabling a supported occurrence; writes only with --apply.
+    #[command(about = "Preview disabling a supported occurrence; writes only with --apply")]
     Disable(ToggleArgs),
-    /// List sanitized durable operation history (independent of the cache).
+    #[command(about = "List sanitized durable operation history (independent of the cache)")]
     Operations {
         #[arg(long)]
         json: bool,
     },
-    /// Preview conflict-aware restoration; writes only with --apply.
+    #[command(about = "Preview conflict-aware restoration; writes only with --apply")]
     Undo {
         operation_id: String,
         #[arg(long)]
@@ -85,33 +85,35 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Serve read-only MCP over stdio (protocol output only).
+    #[command(about = "Serve read-only MCP over stdio (protocol output only)")]
     Mcp,
 }
 
 #[derive(clap::Args)]
 struct OwnedArgs {
-    /// Exact owned, item or occurrence ID; names never establish ownership.
+    #[arg(help = "Exact owned, item or occurrence ID; names never establish ownership")]
     id: String,
-    /// Publish the retained plan; without this flag the command only previews.
+    #[arg(help = "Publish the retained plan; without this flag the command only previews")]
     #[arg(long)]
     apply: bool,
     #[arg(long)]
     json: bool,
-    /// Refuse if source, provenance or owned preconditions changed since this token.
+    #[arg(help = "Refuse if source, provenance or owned preconditions changed since this token")]
     #[arg(long)]
     expect: Option<String>,
 }
 #[derive(clap::Args)]
 struct InstallArgs {
     source: String,
-    /// Treat source as an explicit Git repository (local path or credential-free HTTPS URL).
+    #[arg(
+        help = "Treat source as an explicit Git repository (local path or credential-free HTTPS URL)"
+    )]
     #[arg(long)]
     git: bool,
-    /// Git branch, tag or exact commit (default HEAD).
+    #[arg(help = "Git branch, tag or exact commit (default HEAD)")]
     #[arg(long = "ref", requires = "git")]
     revision: Option<String>,
-    /// Exact repository-relative skill directory; required when several skills exist.
+    #[arg(help = "Exact repository-relative skill directory; required when several skills exist")]
     #[arg(long)]
     skill: Option<String>,
     #[arg(long, required = true, value_parser = ["claude", "codex"], action = clap::ArgAction::Append)]
@@ -127,18 +129,18 @@ struct InstallArgs {
 }
 #[derive(clap::Args)]
 struct ToggleArgs {
-    /// Stable item or exact occurrence ID from scan/show.
+    #[arg(help = "Stable item or exact occurrence ID from scan/show")]
     id: String,
     #[arg(long, value_parser = ["claude", "codex"])]
     agent: String,
-    /// Scope of the selected occurrence (required; never inferred).
+    #[arg(help = "Scope of the selected occurrence (required; never inferred)")]
     #[arg(long, value_parser = ["user", "project", "local"])]
     scope: String,
     #[arg(long)]
     apply: bool,
     #[arg(long)]
     json: bool,
-    /// Refuse if the newly computed preview differs from this earlier token.
+    #[arg(help = "Refuse if the newly computed preview differs from this earlier token")]
     #[arg(long)]
     expect: Option<String>,
 }

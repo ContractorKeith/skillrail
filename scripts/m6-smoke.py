@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""M6 public CLI local/Git lifecycle and real PTY preview/cancel/apply/history/undo."""
 import fcntl
 import json
 import os
@@ -72,7 +71,6 @@ def main():
             wait_for(lambda text: "Skills/MCP: 1" in text, "inventory")
             send(b"u", '"action": "update"')
             assert link.resolve() == original
-            # Scroll the retained diff so the actual file summary is visible in the PTY.
             os.write(master, b"\x1b[6~" * 8)
             wait_for(lambda text: '"content_diff"' in text or '"sha256"' in text or '"size"' in text, "content diff")
             send(b"\x1b", "Skills/MCP: 1")

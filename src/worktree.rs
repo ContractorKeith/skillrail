@@ -1,11 +1,9 @@
-//! Claude's documented main-checkout fallback, using bounded local Git layout evidence.
 use crate::files;
 use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
 
-/// None means fallback does not apply. Errors mean its applicability is unknown.
 pub fn claude_main_skills(root: &Path) -> Result<Option<PathBuf>, ()> {
     let gitfile = root.join(".git");
     let metadata = match fs::symlink_metadata(&gitfile) {
@@ -16,13 +14,11 @@ pub fn claude_main_skills(root: &Path) -> Result<Option<PathBuf>, ()> {
     if metadata.is_dir() {
         return Ok(None);
     }
-    // A present root skills directory, including an empty one, suppresses fallback.
     let own_skills = root.join(".claude/skills");
     match fs::symlink_metadata(&own_skills) {
         Ok(_) if own_skills.is_dir() => return Ok(None),
         Ok(_) => return Err(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // A broken/unsafe .claude parent is not evidence that skills are absent.
             match fs::symlink_metadata(root.join(".claude")) {
                 Ok(parent) if parent.is_dir() => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -44,7 +40,6 @@ pub fn claude_main_skills(root: &Path) -> Result<Option<PathBuf>, ()> {
     {
         return Err(());
     }
-    // Only the normal linked-worktree layout is supported. Both directions must agree.
     let common_pointer = line(&admin.join("commondir"))?;
     if directory(&resolve(&admin, &common_pointer)?)? != common {
         return Err(());
@@ -77,7 +72,6 @@ fn resolve(base: &Path, value: &str) -> Result<PathBuf, ()> {
             Component::RootDir => normalized.push(component.as_os_str()),
             Component::Normal(_) => {
                 normalized.push(component.as_os_str());
-                // Validate before collapsing later '..' components: symlinks change their meaning.
                 if fs::symlink_metadata(&normalized)
                     .map_err(|_| ())?
                     .is_symlink()
@@ -101,7 +95,6 @@ fn resolve(base: &Path, value: &str) -> Result<PathBuf, ()> {
     Ok(normalized)
 }
 
-// Reject symlinked administrative paths before opening pointer files. No arbitrary recursion.
 fn directory(path: &Path) -> Result<PathBuf, ()> {
     let mut prefix = PathBuf::new();
     for component in path.components() {

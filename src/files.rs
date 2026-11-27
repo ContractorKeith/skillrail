@@ -1,4 +1,3 @@
-//! Bounded, non-executing reads shared by discovery, metadata and fingerprints.
 use std::{fs, io::Read, path::Path};
 
 pub fn read(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {
@@ -8,14 +7,13 @@ pub fn read(path: &Path, limit: u64) -> Result<Vec<u8>, ()> {
     }
     let mut options = fs::OpenOptions::new();
     options.read(true);
-    // Do not block on a substituted FIFO or follow a substituted final symlink.
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         #[cfg(target_os = "linux")]
-        options.custom_flags(0x20000 | 0x800); // O_NOFOLLOW | O_NONBLOCK
+        options.custom_flags(0x20000 | 0x800);
         #[cfg(target_os = "macos")]
-        options.custom_flags(0x100 | 0x4); // O_NOFOLLOW | O_NONBLOCK
+        options.custom_flags(0x100 | 0x4);
     }
     let file = options.open(path).map_err(|_| ())?;
     let opened = file.metadata().map_err(|_| ())?;

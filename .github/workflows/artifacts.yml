@@ -1,5 +1,4 @@
 name: Candidate archives
-# No tag trigger, write permission or publication step. Parent owns release.
 on:
   workflow_dispatch:
   pull_request:

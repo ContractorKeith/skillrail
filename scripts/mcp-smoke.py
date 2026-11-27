@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Raw stdio boundary probes complement the official Rust SDK client test."""
 import argparse
 import json
 import os
@@ -9,6 +8,8 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+
+DESCRIPTION = 'Raw stdio boundary probes complement the official Rust SDK client test.'
 
 
 class Client:
@@ -76,17 +77,13 @@ def scenario(binary, root, version):
         tools = client.request(2, "tools/list")["result"]["tools"]
         assert len(tools) == 5
         assert all(t["annotations"]["readOnlyHint"] for t in tools)
-        # SDK transport discards syntax errors and oversized lines, then resumes.
         client.raw(b'{BROKEN_CREDENTIAL_CANARY\n')
         client.raw(b'X' * (64 * 1024 + 1) + b'\n')
         assert client.request(3, "ping")["result"] == {}
-        # Structurally invalid JSON-RPC gets a sanitized Invalid Request.
         client.raw(b'{"jsonrpc":"2.0","id":{},"method":"ping","params":{"secret":"DO_NOT_ECHO"}}\n')
         malformed = client.read()
         assert malformed["error"]["code"] == -32600, malformed
         assert "DO_NOT_ECHO" not in json.dumps(malformed)
-        # Pipeline responses and malformed shapes to exercise the service's
-        # send/receive cancellation boundary through real OS pipes.
         batch = []
         ping_ids = set()
         for index in range(16):
@@ -111,8 +108,6 @@ def scenario(binary, root, version):
         ]:
             response = client.request(ident, method, params)
             assert response["error"]["code"] == -32602, response
-        # No raw resources, skill bodies or mutation capability.
-        # The pinned SDK rejects malformed outer params before tool validation.
         for ident, params in [
             (40, {"name": "get_item", "arguments": []}),
             (41, {"name": 42, "arguments": {}}),
@@ -128,8 +123,6 @@ def scenario(binary, root, version):
         resources = client.request(9, "resources/read", {"uri": "file:///SKILL.md"})
         assert resources["error"]["code"] == -32601, resources
         client.request(10, "tools/call", {"name": "list_inventory", "arguments": {}})
-        # A real locked cache keeps one filesystem scan busy; protocol and busy
-        # responses must remain responsive without accumulating scan workers.
         with sqlite3.connect(root / "state/index.sqlite3") as connection:
             connection.execute("BEGIN IMMEDIATE")
             started = time.monotonic()
@@ -147,7 +140,6 @@ def scenario(binary, root, version):
         completed = client.read()
         assert completed["id"] in (20, 21) and completed["id"] != busy["id"]
         assert not completed["result"]["isError"]
-        # Disconnect with a scan in flight while the filesystem/cache is blocked.
         with sqlite3.connect(root / "state/index.sqlite3") as connection:
             connection.execute("BEGIN IMMEDIATE")
             client.send({"jsonrpc":"2.0", "id":30, "method":"tools/call",
@@ -162,7 +154,7 @@ def scenario(binary, root, version):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--repeat", type=int, choices=range(1, 21), default=1,
                         metavar="1..20", help="bounded live protocol stress repetitions")
     args = parser.parse_args()

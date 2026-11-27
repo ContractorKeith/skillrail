@@ -1,4 +1,3 @@
-"""Keep the Darwin PTY exception narrower than actual terminal restoration."""
 import copy
 import sys
 import termios

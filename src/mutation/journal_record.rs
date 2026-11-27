@@ -1,4 +1,3 @@
-//! Private v2 wire format stores each pre/post byte sequence once, including during undo.
 use super::*;
 
 pub(super) const LIMIT: usize = 4 * 1024 * 1024;
@@ -159,9 +158,6 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Record, AppError> {
     }
 }
 
-/// Reserve the largest possible serialized v2 state, before recording or publishing anything.
-/// Bytes and parent chains never grow. Future file identities use maximum-width numbers;
-/// all files can have both a published replacement and an undo stage. Undo is planned once.
 pub(super) fn admit(record: &Record) -> Result<(), AppError> {
     if record.changes.is_empty() {
         return Ok(());
@@ -175,7 +171,7 @@ pub(super) fn admit(record: &Record) -> Result<(), AppError> {
         return Err(capacity_error());
     }
     let mut worst = record.clone();
-    worst.status = "prepared".into(); // longest supported status
+    worst.status = "prepared".into();
     worst.undo_changes.clear();
     for c in &mut worst.changes {
         c.published = Some(Snapshot::reservation(&c.after));

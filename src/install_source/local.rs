@@ -1,4 +1,3 @@
-//! Bounded candidate enumeration precedes reading only the selected local tree.
 use super::*;
 
 pub(super) fn collect(

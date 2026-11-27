@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""M4 real PTY preview/cancel/apply/history/undo. No agent sessions or user paths."""
 import fcntl
 import argparse
 import json
@@ -21,7 +20,6 @@ def main(read_size=65536):
     metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"]))
     target = Path(metadata["target_directory"])
     binary = target / "debug/skillrail"
-    # Build caches may have writable ancestors; mutation fixtures need trusted paths.
     with tempfile.TemporaryDirectory(prefix="m4-") as directory:
         root = Path(directory).resolve()
         (root / "home/.codex").mkdir(parents=True)
@@ -38,14 +36,12 @@ def main(read_size=65536):
             process = subprocess.Popen(command(binary, root) + ["tui"], stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
 
             def frame_end():
-                # Pinned Ratatui/Crossterm emits Hide after each complete draw.
                 marker = b"\x1b[?25l"
                 at = output.rfind(marker)
                 return at + len(marker) if at >= 0 else 0
 
             def wait_for(predicate, description, after=0):
                 deadline = time.monotonic() + 10
-                # Never match old text remaining beneath a partially drawn screen.
                 while frame_end() <= after or not predicate(screen_text(output[:frame_end()], 40, 180)):
                     assert time.monotonic() < deadline, f"{description}: {screen_text(output, 40, 180)!r}"
                     assert process.poll() is None, f"exited before {description}"
@@ -71,7 +67,6 @@ def main(read_size=65536):
             send(b"\x1b", "Skills/MCP: 1")
             send(b"h", "Operation history")
             send(b"u", "Enter: apply")
-            # A PTY read may end after the header but before the preview body.
             wait_for(lambda text: '"action": "undo"' in text, "undo preview body")
             send(b"\x1b", "Skills/MCP: 1")
             assert config.read_bytes() != original_bytes

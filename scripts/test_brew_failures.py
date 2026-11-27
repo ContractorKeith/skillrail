@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Stateful package-manager failures, with no real Homebrew mutations."""
 import json
 import os
 from pathlib import Path

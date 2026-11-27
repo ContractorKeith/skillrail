@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Opt-in real Claude config replay and anonymous HTTPS acquisition evidence.
-
-Never starts a model session, reads user configuration, or emits native output.
-Missing safe native session prerequisites remain pending in the release ledger.
-"""
 import argparse
 import hashlib
 import json
@@ -13,6 +8,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+
+DESCRIPTION = 'Opt-in real Claude config replay and anonymous HTTPS acquisition evidence.\n\nNever starts a model session, reads user configuration, or emits native output.\nMissing safe native session prerequisites remain pending in the release ledger.'
 
 if not __debug__:
     raise RuntimeError("Evidence checks require Python assertions; remove -O/PYTHONOPTIMIZE")
@@ -34,7 +31,6 @@ def run(args, cwd, env, timeout=45):
             child.communicate()
             raise RuntimeError("command timed out; process group stopped; raw output withheld") from None
     if child.returncode:
-        # Native stderr can contain configuration/auth context. Do not print it.
         raise RuntimeError(f"{Path(str(args[0])).name} failed (exit {child.returncode}); raw output withheld")
     return stdout
 
@@ -45,7 +41,7 @@ def write(path, content):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("mode", choices=["claude", "https"])
     parser.add_argument("--debug", action="store_true", help="show tracebacks for refusals")
     parser.add_argument("--binary", type=Path, default=ROOT / "target/debug/skillrail")
@@ -53,8 +49,6 @@ def main():
     parser.add_argument("--expected-claude-version", default="2.1.316 (Claude Code)")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
-    # Only these inherited values survive; no provider keys, routing, injected
-    # settings, Git wrappers, telemetry endpoints, or token-bearing environment.
     env = {k: os.environ[k] for k in ("HOME", "CODEX_HOME", "TMPDIR") if k in os.environ}
     env.update(PATH="/usr/bin:/bin", LANG="C", GIT_CONFIG_GLOBAL="/dev/null",
                GIT_CONFIG_SYSTEM="/dev/null", GIT_CONFIG_NOSYSTEM="1")
