@@ -15,6 +15,7 @@ import sys
 import tempfile
 import termios
 import time
+from pty_keys import DOWN, ENTER, PAGE_DOWN, PAGE_UP
 
 
 def terminal_attributes_equal(before, after):
@@ -118,7 +119,7 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 refreshed = len(json.loads(row[0])["items"]) == 4
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
-            os.write(master, b"/refreshed\r")
+            os.write(master, b"/refreshed" + ENTER)
             while "Search: refreshed |" not in screen_text(output) or "Added after startup" not in screen_text(output):
                 assert time.monotonic() < deadline, "TUI search did not select matching details"
                 if select.select([master], [], [], 0.1)[0]:
@@ -128,7 +129,7 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 assert time.monotonic() < deadline, "TUI agent filter did not change"
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
-            os.write(master, b"\x1b[B\x1b[6~")
+            os.write(master, DOWN + PAGE_DOWN)
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 30, 0, 0))
             os.kill(process.pid, signal.SIGWINCH)
             while not screen_text(output, 8, 30).splitlines()[7].startswith("└"):
@@ -136,7 +137,7 @@ def tui_smoke(binary, root, fail_refresh=False, exit_backpressure=False,
                 if select.select([master], [], [], 0.1)[0]:
                     output.extend(os.read(master, 65536))
             if exit_backpressure:
-                os.write(master, b"\x1b[6~\x1b[5~" * 100)
+                os.write(master, (PAGE_DOWN + PAGE_UP) * 100)
             if resize_quit:
                 os.kill(process.pid, signal.SIGWINCH)
             if before_quit is not None:
