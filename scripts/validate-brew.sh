@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Reversible local tap/install/test against an exact candidate, never publishes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${TMPDIR:?Set a private disk-backed TMPDIR}"
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_AUTOREMOVE=1
 brew_executable=$(command -v brew)
-# A timed-out child returns to this shell so its cleanup trap still runs.
 brew() {
   python3 - "$brew_executable" "$@" <<'PY_BREW'
 import os
@@ -23,7 +21,6 @@ sys.exit(status)
 PY_BREW
 }
 brew --version
-# Refuse existing names; cleanup must never remove someone else's install/tap.
 installed=$(brew list --formula --versions) || { echo 'Cannot establish installed formula state; refusing changes.' >&2; exit 1; }
 taps=$(brew tap) || { echo 'Cannot establish tap state; refusing changes.' >&2; exit 1; }
 has_candidate() {
@@ -50,7 +47,6 @@ cleanup() {
   cleanup_failed=0
   retain=0
   if [ "$tapped" = 1 ] && { [ -e "$tap_repo" ] || [ -L "$tap_repo" ]; }; then
-    # A failed tap command may still create a checkout. Remove only our origin.
     origin=$(git -C "$tap_repo" config --local --get remote.origin.url) || origin=
     if [ "$origin" != "$fixture" ] || [ -L "$tap_repo" ]; then
       echo 'Candidate tap ownership is uncertain; retained for inspection.' >&2

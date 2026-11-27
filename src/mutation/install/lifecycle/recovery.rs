@@ -1,4 +1,3 @@
-//! Durable original retention, replacement publication and restartable restoration.
 use super::*;
 fn backup_tree(l: &Lifecycle) -> PathBuf {
     l.old.store.path.join(&l.backup)
@@ -262,8 +261,6 @@ fn restore(
             let mut new = r.clone();
             new.version = 3;
             new.lifecycle = None;
-            // Once an old link is back, its new counterpart has already been removed.
-            // Cleanup only the new paths that remain, never the restored original.
             let i = new.install.as_mut().ok_or_else(journal_error)?;
             let mut remaining = vec![];
             for link in i.links.drain(..) {

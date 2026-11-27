@@ -1,4 +1,3 @@
-//! Local Git evidence only: no Git commands, includes, hooks or remote requests.
 use crate::files;
 use serde::Serialize;
 use std::{fs, path::Path};
@@ -32,7 +31,6 @@ pub fn source(path: &Path) -> Source {
             continue;
         }
         let subpath = path.strip_prefix(parent).ok().and_then(Path::to_str);
-        // Linked worktree gitfiles and symlinked Git metadata need separate evidence.
         if fs::symlink_metadata(&git).is_ok_and(|m| m.is_dir())
             && let Ok(config) = files::text(&git.join("config"), 64 * 1024)
             && let Some(remote) = origin(&config)
@@ -67,7 +65,6 @@ pub fn source(path: &Path) -> Source {
 }
 
 fn origin(config: &str) -> Option<String> {
-    // This deliberately narrow grammar must never normalize unknown Git syntax.
     if !config.is_ascii()
         || config
             .bytes()
@@ -92,8 +89,6 @@ fn origin(config: &str) -> Option<String> {
         }
         if line.starts_with('[') {
             let section = line.strip_prefix('[')?.strip_suffix(']')?;
-            // Git section/key names are case-insensitive; quoted subsections are not.
-            // Reject deprecated dotted remote syntax instead of overlooking another origin.
             if section.to_ascii_lowercase().starts_with("remote.") {
                 return None;
             }
@@ -118,7 +113,6 @@ fn origin(config: &str) -> Option<String> {
                     Some(value.trim_matches([' ', '\t'])),
                 )
             });
-            // Validate even ignored keys: malformed config is not provenance evidence.
             if !in_section
                 || value.is_some_and(|v| v.contains('"'))
                 || !key.starts_with(|c: char| c.is_ascii_alphabetic())
@@ -137,7 +131,6 @@ fn origin(config: &str) -> Option<String> {
     remote
 }
 
-// Reject rather than redact credential-bearing or ambiguous URLs. No arbitrary URL fields escape.
 pub(crate) fn safe_remote(value: &str) -> Option<String> {
     let rest = value.strip_prefix("https://")?;
     let (host, path) = rest.split_once('/')?;

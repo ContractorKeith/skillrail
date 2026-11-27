@@ -1,4 +1,3 @@
-//! Durable install publication and conflict-aware recovery.
 use super::*;
 pub(crate) fn apply(
     app: &Application,
@@ -83,7 +82,6 @@ fn check_destinations_after_stage(i: &Install) -> Result<(), AppError> {
     Ok(())
 }
 
-// Shared tree/link lifecycle primitives; callers own the durable intent and lock.
 pub(super) fn cleanup(
     app: &Application,
     r: &Record,
@@ -206,7 +204,6 @@ pub(super) fn publish(
         let l = &mut i.links[n];
         let d = l.root.ensure()?;
         l.parents = Some(d.chain.clone());
-        // Save parent binding before creating the link stage.
         *saved = j.save(r, Some(saved))?;
         let i = r.install.as_ref().ok_or_else(journal_error)?;
         let l = &i.links[n];

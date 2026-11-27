@@ -636,7 +636,6 @@ fn claude_mcp_project_opt_out_preserves_native_lists_unknown_keys_and_credential
 #[test]
 fn unsupported_plugin_collision_and_schema_refusals_are_byte_identical() {
     let f = Fixture::new();
-    // Same native MCP name across scopes cannot be selected safely by a broad toggle.
     fs::create_dir_all(f.path("project/.codex")).unwrap();
     fs::write(
         f.path("project/.codex/config.toml"),
@@ -659,7 +658,6 @@ fn unsupported_plugin_collision_and_schema_refusals_are_byte_identical() {
     assert_eq!(result.status.code(), Some(4));
     assert_eq!(bytes(&f.path("home/.codex/config.toml")), original);
     assert!(!f.path("state/journal").exists());
-    // Selected plugin content stays owned by its native lifecycle.
     fs::remove_file(f.path("project/.codex/config.toml")).unwrap();
     fs::create_dir_all(f.path("home/.claude/skills/plugin/.claude-plugin")).unwrap();
     fs::write(
@@ -681,7 +679,6 @@ fn unsupported_plugin_collision_and_schema_refusals_are_byte_identical() {
         .unwrap();
     let plugin = f.path("home/.claude/skills/plugin/.mcp.json");
     let original_plugin = bytes(&plugin);
-    // An explicit known plugin scope still refuses native lifecycle changes.
     let result = f.run(&[
         "disable",
         row["id"].as_str().unwrap(),
@@ -898,7 +895,6 @@ fn extended_acl_is_refused_instead_of_dropping_access_metadata() {
     let path = f.path("home/.codex/config.toml");
     let original = bytes(&path);
     let mut acl = 2u32.to_le_bytes().to_vec();
-    // Linux POSIX ACL xattr format, including a named grant that mode bits cannot describe.
     let entries = [
         (1u16, 6u16, u32::MAX),
         (2, 4, 42424),
@@ -1616,7 +1612,6 @@ int fsync(int fd) {
     assert!(child(false, false).status.success());
     assert_eq!(bytes(&path), original);
     assert_eq!(a.operations().unwrap().operations[0].status, "undone");
-    // Positive fault control: a fresh unrecorded undo stage must hit the intercepted fsync.
     let p = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
     let next = a.apply(&p).unwrap().operation_id;
     fs::write(f.path("operation-id"), next).unwrap();
@@ -1627,7 +1622,6 @@ int fsync(int fd) {
     let p = a.plan_toggle(request(f.occurrence("mcp"))).unwrap();
     let next = a.apply(&p).unwrap().operation_id;
     fs::write(f.path("operation-id"), next).unwrap();
-    // Repeated deaths during write_all leave only an unrecorded prefix, not a durable inode.
     for _ in 0..3 {
         assert_eq!(
             child_with_partial(false, true, true).status.code(),
@@ -1738,8 +1732,6 @@ fn sequential_history_undo_keeps_strict_external_identity_preconditions() {
     let a = json(f.run(&[
         "disable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",
     ]));
-    // Keep A's inode allocated: a filesystem may otherwise recycle its number
-    // during B's undo, which would not exercise a changed-identity conflict.
     let published = fs::File::open(f.path("home/.codex/config.toml")).unwrap();
     let b = json(f.run(&[
         "enable", &id, "--agent", "codex", "--scope", "user", "--apply", "--json",

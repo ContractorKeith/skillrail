@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Observable artifact admission, reproducibility and corruption controls."""
 import importlib.util
 import io
 import gzip
@@ -23,7 +22,6 @@ spec.loader.exec_module(release)
 
 class Artifacts(unittest.TestCase):
     def test_build_packages_current_cargo_configured_artifact(self):
-        # Real Cargo, a dependency-free fixture, and a stale default executable.
         for setting in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR", "config-file"):
             with self.subTest(setting=setting), tempfile.TemporaryDirectory(prefix="s7-build-") as directory:
                 root = Path(directory)
@@ -240,7 +238,6 @@ def entries_for(files):
 
 
 def tar_bytes(entries, end=bytes(1024)):
-    """Hand-built USTAR so a test can break exactly one record at a time."""
     out = bytearray()
     for entry in entries:
         data = entry["data"]
@@ -263,7 +260,6 @@ def write_archive(directory, entries, name=None, end=bytes(1024), version="0.1.0
 
 
 class Guards(unittest.TestCase):
-    """Each admission guard is the only reason its malformed archive is refused."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="s7-guard-")
@@ -285,8 +281,6 @@ class Guards(unittest.TestCase):
         self.refused(archive, "archive metadata mismatch")
 
     def test_duplicate_member_refuses(self):
-        # The four-header loop and the missing-member check also refuse any
-        # duplicate, so this pins the outcome rather than a single guard.
         files = with_sums(good_files())
         entries = [e for e in entries_for(files) if e["name"] != "SHA256SUMS"]
         entries.insert(1, {"name": "LICENSE", "data": b"first license\n"})
@@ -322,7 +316,6 @@ class Guards(unittest.TestCase):
     def test_compressed_budget(self):
         good = write_archive(self.root, entries_for(with_sums(good_files())))
         raw = good.read_bytes()
-        # A 102 MiB gzip FCOMMENT keeps the stream valid and the checksum matching.
         big = self.root / "big" / good.name
         big.parent.mkdir()
         with big.open("wb") as out:
@@ -433,7 +426,6 @@ class Epoch(unittest.TestCase):
 
 
 class Refusals(unittest.TestCase):
-    """Every refusal is one line naming the file and the problem."""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="s7-refuse-")

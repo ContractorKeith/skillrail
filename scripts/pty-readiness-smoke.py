@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Force simultaneous resize/input readiness through the real TUI and PTY driver."""
 import json
 import os
 from pathlib import Path
@@ -11,10 +10,6 @@ import tempfile
 sys.dont_write_bytecode = True
 from smoke import seed, tui_smoke
 
-# This controls only legal readiness batching/order. It neither changes input
-# bytes nor fakes application events. The old edge-triggered reader loses the
-# input event after returning a signal-first batch. The level-triggered reader
-# must see both descriptors ready and preserve progress without a second key.
 SOURCE = r"""
 #define _GNU_SOURCE
 #include <dlfcn.h>

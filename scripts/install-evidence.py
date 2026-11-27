@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Optional pinned Codex metadata-function evidence; not a native loading test."""
 import hashlib
 import os
 from pathlib import Path
@@ -20,7 +19,6 @@ def main():
     sanitize = source.split("fn sanitize_single_line(", 1)[1].split("fn repair_frontmatter_scalar_fields(", 1)[0]
     validate = source.split("fn validate_len(", 1)[1].split("fn extract_frontmatter(", 1)[0]
     functions = "fn sanitize_single_line(" + sanitize + "\nfn validate_len(" + validate
-    # Collaborator has the native error variants/fields consumed by the extracted function.
     program = r'''
 #[allow(dead_code)]
 #[derive(Debug)]

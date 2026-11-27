@@ -1,4 +1,3 @@
-//! One query seam over sanitized discovery facts, including TUI snapshots.
 use crate::{AppError, Application, Inventory, discovery::Agent};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -11,22 +10,22 @@ pub const MAX_LIMIT: usize = 200;
 #[derive(Debug, Clone, Deserialize, clap::Args)]
 #[serde(default, deny_unknown_fields)]
 pub struct Query {
-    /// Item kind: skill or mcp.
+    #[arg(help = "Item kind: skill or mcp")]
     #[arg(long)]
     pub kind: Option<String>,
-    /// Agent occurrence: claude or codex.
+    #[arg(help = "Agent occurrence: claude or codex")]
     #[arg(long)]
     pub agent: Option<String>,
-    /// Occurrence scope: user, project, local or unknown.
+    #[arg(help = "Occurrence scope: user, project, local or unknown")]
     #[arg(long)]
     pub scope: Option<String>,
-    /// Maximum items (1..200, default 100).
+    #[arg(help = "Maximum items (1..200, default 100)")]
     #[arg(long, default_value_t = DEFAULT_LIMIT)]
     pub limit: usize,
-    /// Item offset; requires --revision when nonzero.
+    #[arg(help = "Item offset; requires --revision when nonzero")]
     #[arg(long, default_value_t = 0)]
     pub offset: usize,
-    /// Inventory revision returned by the previous page.
+    #[arg(help = "Inventory revision returned by the previous page")]
     #[arg(long)]
     pub revision: Option<String>,
     #[arg(skip)]
@@ -94,7 +93,6 @@ impl Query {
         Ok(())
     }
 
-    /// Indices into one snapshot; matching occurrences constrain each other.
     pub fn indices(&self, inventory: &Inventory) -> Vec<usize> {
         let needle = self.query.as_ref().map(|v| v.to_lowercase());
         let matching_occurrences: BTreeSet<_> = inventory
@@ -170,7 +168,6 @@ impl Application {
 
 pub fn query_snapshot(mut inventory: Inventory, query: &Query) -> Result<QueryResult, AppError> {
     query.validate()?;
-    // Timestamp is deliberately excluded; any changed sanitized fact invalidates pages.
     let mut hash = HashWriter(Sha256::new());
     serde_json::to_writer(
         &mut hash,
@@ -211,7 +208,6 @@ pub fn query_snapshot(mut inventory: Inventory, query: &Query) -> Result<QueryRe
         .collect();
     inventory.items.retain(|i| ids.contains(&i.id));
     inventory.items.sort_by(|a, b| a.id.cmp(&b.id));
-    // Keep all occurrences of matching items so visibility/provenance explanations are complete.
     inventory.occurrences.retain(|o| ids.contains(&o.item_id));
     inventory.occurrences.sort_by(|a, b| a.id.cmp(&b.id));
     let result = QueryResult {

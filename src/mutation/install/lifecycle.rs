@@ -1,4 +1,3 @@
-//! Owned lifecycle: retain original inodes privately; publish replacements with M5 guards.
 use super::*;
 mod recovery;
 pub(in crate::mutation) use recovery::{apply, plan_undo};
@@ -126,7 +125,6 @@ pub(super) fn validate_record(r: &Record) -> Result<(), AppError> {
     }
     Ok(())
 }
-// Original links must be present, with exact durable identities, for a new mutation.
 fn original(app: &Application, i: &Install) -> Result<(), AppError> {
     check_journal(app, i)?;
     i.store.check()?;
@@ -213,9 +211,6 @@ impl Application {
         }
         let mut old = old.ok_or_else(|| refused("Owned content or links differ from durable installation evidence; preserve edits and use the original journal/context."))?;
         original(self, &old)?;
-        // Pin selection to the manifest, even if an originally unambiguous source grows another skill.
-        // Provenance normalizes remote identity (including a .git suffix). Keep
-        // the declared HTTPS endpoint; normalize only local paths for later cwd use.
         if !old.request.source.starts_with("https://") {
             old.request.source = old.manifest.provenance.origin.clone();
         }
@@ -352,7 +347,6 @@ pub(super) fn plan(r: Record, undo: bool, before: Option<Snapshot>) -> Result<Pl
         preconditions: vec![],
     })
 }
-// Reserve backup and replacement stages as well as the published link.
 fn reserve_links(l: &Lifecycle, update: bool) -> Result<(), AppError> {
     if !absent(&l.old.store.path.join(&l.backup)) {
         return Err(conflict());

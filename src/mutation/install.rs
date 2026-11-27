@@ -1,4 +1,3 @@
-//! Owned tree and selected links, sharing the mutation journal, lock and plan lifecycle.
 use super::*;
 pub(super) mod lifecycle;
 mod runtime;
@@ -251,11 +250,10 @@ fn tree_entries(root: &Path) -> Result<Vec<String>, AppError> {
 }
 fn check_tree(i: &Install, path: &Path, partial: bool) -> Result<(), AppError> {
     let d = Directory::open(path)?;
-    if let Some(chain) = &i.tree_chain {
-        // Stage-to-snapshot rename changes only the lexical basename, not descriptor identities.
-        if &d.chain != chain {
-            return Err(conflict());
-        }
+    if let Some(chain) = &i.tree_chain
+        && &d.chain != chain
+    {
+        return Err(conflict());
     }
     let entries = expected(i)?;
     let dirs = directory_names(&entries);
@@ -346,8 +344,6 @@ fn require_complete_skill_scan(
             }
         }
     }
-    // Plugin skills are added after standalone root completeness is computed.
-    // Their incomplete fingerprints can hide references to an owned snapshot.
     if inventory.occurrences.iter().any(|o| {
         agents.contains(&o.agent)
             && o.mcp.is_none()
@@ -404,8 +400,6 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
         return Ok(());
     }
     i.store.check()?;
-    // Completed installs require complete postconditions. In particular, an M6
-    // retention must not let an older install be marked undone while it owns backups.
     if r.status == "applied" {
         check_tree(i, &i.manifest.snapshot, false)?;
         for l in &i.links {
@@ -426,7 +420,6 @@ pub(super) fn validate_undo(app: &Application, r: &Record) -> Result<(), AppErro
             if actual.is_some() && actual != l.published {
                 return Err(conflict());
             }
-            // An absent link is acceptable during interrupted apply/undo, never another target.
         }
         let stage = l.path.parent().ok_or_else(journal_error)?.join(&i.stage);
         if !absent(&stage) {
@@ -487,8 +480,6 @@ fn check_link_destination(l: &Link, name: &str, stage: &str) -> Result<(), AppEr
     if Directory::open(&l.root.path)?.chain != directory.chain {
         return Err(conflict());
     }
-    // Reserve the stage and published link, so our own lifecycle cannot turn a
-    // previously complete root into an over-budget consumer scan during undo.
     let reserved = if entries.iter().any(|e| e.file_name() == stage) {
         1
     } else {
@@ -656,7 +647,6 @@ pub(super) fn admit(r: &Record) -> Result<(), AppError> {
     let mut worst = r.clone();
     let i = worst.install.as_mut().ok_or_else(journal_error)?;
     let max = Snapshot::reservation(&[]).identity;
-    // Bound all future inode metadata and directory chains; bytes appear only in entries.
     i.tree_chain = Some(vec![max.clone(); i.store.path.components().count() + 2]);
     for e in expected(i)? {
         i.files.insert(e.path, max.clone());
@@ -682,7 +672,6 @@ pub(super) fn admit(r: &Record) -> Result<(), AppError> {
     }
     Ok(())
 }
-/// Manifest ownership is read offline and only from the fixed user store.
 pub(crate) fn owned_source(paths: &Paths, path: &Path) -> Option<crate::provenance::Source> {
     let store = paths.home.join(".skillrail-sources");
     if path.parent() != Some(store.as_path()) {

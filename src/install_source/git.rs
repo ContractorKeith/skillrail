@@ -1,4 +1,3 @@
-//! Isolated Git acquisition and object reads; no checkout or source configuration.
 use super::*;
 use std::{
     io::Read,
@@ -108,7 +107,6 @@ pub(super) fn collect(
         )?;
         safe
     } else {
-        // Never let Git parse a local repository's config, includes, helpers, hooks or alternates.
         let path = std::path::absolute(&r.source).map_err(|_| unsafe_source())?;
         Directory::open(&path)?;
         let metadata = if path.join(".git").exists() {
@@ -167,8 +165,6 @@ pub(super) fn collect(
     if !relative(&selected) {
         return Err(unsafe_source());
     }
-    // Resolve one exact tree component at a time. Never follow a Git symlink or
-    // silently pick one of duplicate/case-aliased selected ancestors.
     let mut tree = rev.clone();
     if selected != "." {
         for component in selected.split('/') {
@@ -205,7 +201,6 @@ pub(super) fn collect(
         });
         blobs.push((entries.len() - 1, entry.object));
     }
-    // Shape validation precedes any selected blob read and journal admission.
     validate_entries(&entries)?;
     let mut budget = 512 * 1024usize;
     for (index, object) in blobs {
@@ -326,8 +321,6 @@ fn copy_git_metadata(source: &Path, dest: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-// Git enables CURL_NETRC_OPTIONAL. Older curl ignores NETRC, so absence of the
-// OS account's implicit credential files is a prerequisite; no values are read.
 fn anonymous_https() -> Result<(), AppError> {
     let mut storage = vec![0u8; 64 * 1024];
     let mut account = std::mem::MaybeUninit::<libc::passwd>::uninit();

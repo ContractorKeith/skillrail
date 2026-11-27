@@ -1,4 +1,3 @@
-//! The official SDK client talks to the executable, not an in-process handler.
 use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
 use serde_json::{Value, json};
 use std::{fs, time::Duration};

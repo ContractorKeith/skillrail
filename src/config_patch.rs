@@ -1,4 +1,3 @@
-//! Narrow native configuration patches; raw values never leave this module's caller.
 use crate::{AppError, mutation::refused};
 use serde_json::{Value, value::RawValue};
 use std::collections::BTreeMap;
@@ -9,7 +8,6 @@ fn schema() -> AppError {
     )
 }
 
-/// Replace a value span or insert one object key, preserving every other input byte.
 pub(crate) fn json_set(text: &str, keys: &[&str], new: Value) -> Result<String, AppError> {
     crate::json_config::parse(text).map_err(|_| schema())?;
     fn patch(text: &str, keys: &[&str], new: &Value) -> Result<String, AppError> {
@@ -112,7 +110,6 @@ pub(crate) fn toml_skill(
         skills.insert("config", Item::ArrayOfTables(Default::default()));
     }
     let config = skills.get_mut("config").unwrap();
-    // Both native TOML array shapes are supported, without reserializing unrelated fields.
     if let Some(tables) = config.as_array_of_tables_mut() {
         let last = tables.iter().last();
         if let Some(last) = last
@@ -156,8 +153,6 @@ pub(crate) fn toml_skill(
     finish_toml(text, doc.to_string())
 }
 
-// toml_edit emits LF. Restore a uniform CRLF convention only when reparsing proves
-// it does not change values (including literal/multiline strings). Mixed styles refuse.
 fn finish_toml(original: &str, edited: String) -> Result<String, AppError> {
     let crlf = original.matches("\r\n").count();
     if crlf == 0 {

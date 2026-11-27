@@ -2,7 +2,6 @@ use skillrail::AppError;
 use std::io::Write;
 use std::path::Path;
 
-// Flush explicitly so buffered write failures use the same operational contract.
 pub fn stdout(text: &str) -> Result<(), AppError> {
     let mut output = std::io::stdout().lock();
     output
@@ -25,7 +24,6 @@ pub fn finish(result: Result<(), AppError>, json: bool) -> std::process::ExitCod
             } else {
                 error.to_string()
             };
-            // If stderr also fails, retain the error exit without a second panic.
             let _ = writeln!(std::io::stderr().lock(), "{message}");
             std::process::ExitCode::from(match error.code {
                 "invalid_arguments" => 2,

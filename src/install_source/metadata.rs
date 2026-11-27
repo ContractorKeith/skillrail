@@ -1,4 +1,3 @@
-//! Admission checks for selected native adapters, separate from inventory diagnostics.
 use super::*;
 
 pub(super) fn validate(text: &str, agents: &[String]) -> Result<String, AppError> {
@@ -18,8 +17,6 @@ pub(super) fn validate(text: &str, agents: &[String]) -> Result<String, AppError
     for agent in agents {
         match agent.as_str() {
             "codex" => {
-                // Pinned Codex 6ff1e1ca skills/src/parser.rs: 64 characters,
-                // nonblank sanitized description, typed optional metadata.
                 if name.chars().count() > 64 {
                     return Err(unsafe_source());
                 }
@@ -44,8 +41,6 @@ pub(super) fn validate(text: &str, agents: &[String]) -> Result<String, AppError
                 let _ = parsed.metadata;
             }
             "claude" => {
-                // The link's folder name equals frontmatter name. Claude reserves
-                // synced case-insensitively, and the exact synced namespace.
                 if name.eq_ignore_ascii_case("synced")
                     || name.eq_ignore_ascii_case("anthropic-skills")
                     || name.to_ascii_lowercase().starts_with("anthropic-skills:")

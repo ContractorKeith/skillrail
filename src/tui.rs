@@ -1,4 +1,3 @@
-//! Minimal real terminal UI; rendering and events are testable without a terminal.
 use crate::{AppError, Application, Inventory};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
@@ -106,7 +105,6 @@ impl Selection {
     }
 }
 
-/// Interactive state only filters the last explicit scan; it never discovers sources.
 #[derive(Default)]
 pub struct View {
     pub selection: Selection,
@@ -245,7 +243,6 @@ fn cycle(value: &mut Option<String>, choices: &[&str]) {
     };
 }
 
-// Drop also runs on I/O errors and unwinding; Ratatui installs its panic restore hook.
 struct RestoreTerminal;
 impl Drop for RestoreTerminal {
     fn drop(&mut self) {
@@ -298,11 +295,9 @@ pub fn run(application: &Application) -> Result<(), AppError> {
             Action::Install => mutations.install(),
             Action::Owned(update) => mutations.owned(application, &view, &inventory, update),
         }
-        // Resize and other events redraw on the next iteration.
     }
 }
 
-/// Mutation screens retain the actual private plan between preview and confirmation.
 #[derive(Default)]
 pub struct MutationUi {
     screen: MutationScreen,
@@ -438,7 +433,6 @@ impl MutationUi {
         self.selected = 0;
         self.scroll = 0;
     }
-    /// Returns true when a modal screen consumed this event.
     pub fn handle(
         &mut self,
         event: &Event,

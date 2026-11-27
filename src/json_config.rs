@@ -1,4 +1,3 @@
-//! Conservative JSON: duplicate keys are ambiguous evidence, not last-value precedence.
 use serde::{
     Deserialize, Deserializer,
     de::{self, MapAccess, SeqAccess, Visitor},

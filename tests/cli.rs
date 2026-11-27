@@ -65,7 +65,6 @@ fn json(output: Output) -> serde_json::Value {
 #[test]
 fn isolated_empty_inventory_rebuilds_and_explains_partial_coverage() {
     let fixture = Fixture::new();
-    // An invalid fixture agent root must produce a safe diagnostic.
     std::fs::write(
         fixture.root.path().join("home/.claude"),
         "not an agent directory",
@@ -296,7 +295,6 @@ fn pagination_is_stable_until_facts_change_and_each_cli_request_rescans() {
 #[test]
 fn oversized_detail_is_refused_without_partial_output() {
     let fixture = Fixture::new();
-    // Many aliases of one source exercise occurrence expansion, not only item limits.
     let source = fixture.root.path().join("source");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(

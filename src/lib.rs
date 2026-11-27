@@ -1,4 +1,3 @@
-//! Shared application core and verified transactional cache.
 mod config_patch;
 pub mod discovery;
 mod files;
@@ -55,7 +54,6 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// Explicit home selection also isolates the default state location from XDG.
     pub fn resolve(
         home: Option<PathBuf>,
         project: Option<PathBuf>,
@@ -87,7 +85,6 @@ impl Paths {
                 "State directory must be a UTF-8 path.",
             ));
         }
-        // Resolve/validate all read roots before creating application state.
         std::fs::create_dir_all(&state_dir).map_err(|_| {
             AppError::new(
                 "invalid_state_dir",
@@ -184,7 +181,6 @@ impl Application {
         Self { paths }
     }
 
-    /// Both list and scan rebuild from currently implemented sources, never stale rows.
     pub fn scan(&self) -> Result<Inventory, AppError> {
         let scanned_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -206,7 +202,6 @@ impl Application {
                 "Cannot rebuild index.sqlite3; check state access or remove the cache and retry.",
             )
         };
-        // SQLite must not follow a substituted cache symlink.
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
@@ -245,7 +240,6 @@ impl Application {
                 params![json],
             )
             .map_err(|_| unavailable())?;
-        // An altered schema can ignore or rewrite INSERT without returning an error.
         let (rows, stored): (i64, String) = transaction
             .query_row(
                 "SELECT (SELECT count(*) FROM scan), inventory_json FROM scan WHERE id = 1",

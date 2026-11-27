@@ -21,10 +21,13 @@ packaging and distribution. Native checks and release skeptic remain release gat
 - docs/CLI.md: implemented commands, JSON, paths and cache/error contracts.
 - docs/PLAN.md: canonical spec, contracts, milestones and acceptance.
 - CONTEXT.md: glossary; docs/grill.md: confirmed interview decisions.
+- docs/adr/: why the code is the way it is. Code carries no comments.
 - Session state: ../worklog/projects/skillrail.md. No repo-local worklog.
 
 ## Conventions & Gotchas
 - One application core for TUI/CLI/MCP; one guarded mutation layer.
+- No code comments (docs/adr/0001). Decisions go in an ADR, hacks in an issue;
+  scripts/check-comments.py ratchets the count down. Repeat with /delete-comment.
 - Never modify real user agent configurations or skills during tests. Use
   explicit --home/--project/--state-dir fixtures; do not overwrite HOME/CODEX_HOME.
 - Credential values never enter public output, SQLite, errors or previews.

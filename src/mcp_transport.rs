@@ -1,4 +1,3 @@
-//! Preserve SDK receive work across the service loop's select cancellation.
 use rmcp::{
     model::{ClientJsonRpcMessage, ServerJsonRpcMessage},
     service::RoleServer,
@@ -19,8 +18,6 @@ use tokio::{
 
 type WriterLock<W> = Pin<Box<dyn Future<Output = OwnedMutexGuard<W>> + Send>>;
 
-// The two SDK transports share one writer. Keep its lock from the first write
-// through flush, so normal replies and parser errors cannot interleave frames.
 struct FrameWriter<W> {
     writer: Arc<Mutex<W>>,
     locking: Option<WriterLock<W>>,
@@ -92,7 +89,6 @@ impl<W: AsyncWrite + Unpin + Send + 'static> Transport<RoleServer> for BoundedTr
     async fn close(&mut self) -> io::Result<()> {
         self.incoming.close();
         self.reader_task.abort();
-        // Await cancellation to release any parser-error frame lock before close.
         let _ = (&mut self.reader_task).await;
         self.outgoing.close().await
     }
@@ -113,7 +109,6 @@ where
         .with_max_line_length(64 * 1024);
     let (incoming_tx, incoming) = mpsc::channel(1);
     let reader_task = tokio::spawn(async move {
-        // This future is only cancelled on close/drop, never by ordinary sends.
         while let Some(message) = input.receive().await {
             if incoming_tx.send(message).await.is_err() {
                 break;
@@ -139,8 +134,6 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_response_survives_cancelled_receive_while_writer_busy() {
-        // One-byte capacity guarantees send holds the shared output lock while
-        // the SDK parser consumes the invalid shape and waits to send its error.
         let (writer, mut output) = tokio::io::duplex(1);
         let input: &'static [u8] = b"{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"ping\",\"params\":{\"secret\":\"DO_NOT_ECHO\"}}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n";
         let mut transport = bounded(input, writer);
@@ -160,7 +153,6 @@ mod tests {
             Poll::Ready(())
         })
         .await;
-        // This is the rmcp service select losing to an outgoing response event.
         drop(receiving);
         let mut first = vec![0; response_len];
         let (sent, read) = tokio::join!(sending, output.read_exact(&mut first));
@@ -203,7 +195,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(prefix[0], b'{'); // Error flush has actually reached backpressure.
+        assert_eq!(prefix[0], b'{');
         drop(receiving);
         let response =
             serde_json::from_value(serde_json::json!({"jsonrpc":"2.0","id":3,"result":{}}))
@@ -281,7 +273,6 @@ mod tests {
 
         let (mut client, input) = tokio::io::duplex(128);
         let transport = bounded(input, tokio::io::sink());
-        // Fill the bounded request channel and leave the one reader backpressured.
         use tokio::io::AsyncWriteExt;
         client.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n").await.unwrap();
         drop(transport);

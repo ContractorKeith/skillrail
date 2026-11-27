@@ -284,7 +284,6 @@ fn sources_aliases_collisions_and_full_folder_drift_are_observable() {
             .iter()
             .all(|i| i["name_collision"] == true)
     );
-    // Repository identity requires both origin and the same relative subpath.
     for base in ["home/.claude", "project/.agents"] {
         write(
             p,
@@ -441,8 +440,6 @@ fn ancestor_boundary_shadowing_and_trust_uncertainty_are_explained() {
         "[projects]\nsecret = 'SECRET_CANARY'\n",
     );
     let uncertain = launch();
-    // Native skill rules ignore project layers; unrelated project config must not
-    // erase the known user enablement observation or imply runtime loading.
     let codex = uncertain["occurrences"]
         .as_array()
         .unwrap()

@@ -1,4 +1,3 @@
-//! Retain local configuration facts independently of unresolved effective layer precedence.
 use crate::{
     Inventory, Paths,
     discovery::{Agent, Occurrence, Scope},
@@ -276,7 +275,6 @@ fn list_choice(
         observe(o, path, scope, key, Status::Invalid);
         return;
     };
-    // Native plugin server names are namespaced; never disable an unrelated same-name definition.
     let name = if let Origin::Plugin { namespace, .. } = &o.origin {
         namespace
             .as_ref()
@@ -300,7 +298,6 @@ fn list_choice(
     }
 }
 
-// These are local settings observations, never proof of effective session visibility.
 fn skill_rule(o: &mut Occurrence, value: &Value, path: &Path, scope: Scope) {
     if o.agent == Agent::Claude {
         let Some(rules) = value.get("skillOverrides") else {
@@ -320,7 +317,6 @@ fn skill_rule(o: &mut Occurrence, value: &Value, path: &Path, scope: Scope) {
             observe(o, path, scope, "skill_enabled", status);
         }
     } else {
-        // Project skills.config is ignored by the pinned native enablement resolver.
         if scope != Scope::User {
             return;
         }

@@ -1,4 +1,3 @@
-//! Read-only stdio MCP. No tracing subscriber: parser context cannot reach logs.
 use crate::{
     AppError, Application,
     query::{self, Query},
@@ -129,7 +128,6 @@ impl ServerHandler for Server {
             )
         })?;
         let application = self.application.clone();
-        // One bounded blocking worker; never queue scans or block the protocol runtime.
         let task = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             application.query(&query).and_then(|r| query::encode(&r))
@@ -148,8 +146,6 @@ impl ServerHandler for Server {
     }
 }
 
-// Observe EOF before rmcp's five-second response drain: a disconnected client
-// cannot consume those responses and must not wait for an in-flight scan.
 struct DisconnectRead<R> {
     reader: R,
     closed: Option<tokio::sync::oneshot::Sender<()>>,
@@ -184,7 +180,6 @@ pub fn run(application: Application) -> Result<(), AppError> {
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        // Tokio stdin/stdout each need blocking capacity alongside the scan.
         .max_blocking_threads(4)
         .enable_all()
         .build()
@@ -209,7 +204,6 @@ pub fn run(application: Application) -> Result<(), AppError> {
         }
         Ok(())
     });
-    // A disconnected client must never wait for a slow filesystem worker to finish.
     runtime.shutdown_timeout(std::time::Duration::from_millis(100));
     result
 }
