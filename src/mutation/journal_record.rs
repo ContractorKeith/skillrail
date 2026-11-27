@@ -6,7 +6,7 @@ pub(super) const LIMIT: usize = 4 * 1024 * 1024;
 struct StoredRecord {
     version: u32,
     id: String,
-    status: String,
+    status: Status,
     context: Context,
     requests: Vec<ToggleRequest>,
     changes: Vec<StoredChange>,
@@ -90,7 +90,7 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, AppError> {
     let wire = StoredRecord {
         version: 2,
         id: record.id.clone(),
-        status: record.status.clone(),
+        status: record.status,
         context: record.context.clone(),
         requests: record.requests.clone(),
         changes,
@@ -171,7 +171,7 @@ pub(super) fn admit(record: &Record) -> Result<(), AppError> {
         return Err(capacity_error());
     }
     let mut worst = record.clone();
-    worst.status = "prepared".into();
+    worst.status = Status::longest();
     worst.undo_changes.clear();
     for c in &mut worst.changes {
         c.published = Some(Snapshot::reservation(&c.after));
@@ -198,4 +198,29 @@ fn capacity_error() -> AppError {
     refused(
         "Complete apply/undo recovery would exceed the 4 MiB private record budget; select fewer or smaller targets. No operation was admitted.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_wire_names_are_unchanged_and_reservation_uses_the_longest() {
+        let names: Vec<String> = Status::ALL
+            .iter()
+            .map(|s| serde_json::to_string(s).unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            ["\"prepared\"", "\"applied\"", "\"undoing\"", "\"undone\""]
+        );
+        for status in Status::ALL {
+            assert_eq!(
+                serde_json::to_string(&status).unwrap(),
+                format!("\"{}\"", status.as_str())
+            );
+            assert!(status.as_str().len() <= Status::longest().as_str().len());
+        }
+        assert!(serde_json::from_str::<Status>("\"preview\"").is_err());
+    }
 }

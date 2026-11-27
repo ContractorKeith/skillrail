@@ -14,7 +14,7 @@ pub(crate) fn apply(
         ));
     }
     let mut view = p.view.clone();
-    if p.undo && p.record.status == "undone" {
+    if p.undo && p.record.status == Status::Undone {
         view.status = "unchanged".into();
         return Ok(view);
     }
@@ -36,13 +36,10 @@ pub(crate) fn apply(
             return Err(conflict());
         }
         validate_undo(app, &r)?;
-        r.status = "undoing".into();
+        r.status = Status::Undoing;
         j.save(&r, Some(&current))?
     } else {
-        if j.records()?
-            .iter()
-            .any(|r| r.status == "prepared" || r.status == "undoing")
-        {
+        if j.records()?.iter().any(|r| r.status.recovering()) {
             return Err(refused(
                 "An interrupted operation requires undo recovery before another apply.",
             ));
@@ -62,9 +59,13 @@ pub(crate) fn apply(
     } else {
         publish(app, &mut r, &j, &mut saved, &mut checkpoint)?;
     }
-    r.status = if p.undo { "undone" } else { "applied" }.into();
+    r.status = if p.undo {
+        Status::Undone
+    } else {
+        Status::Applied
+    };
     j.save(&r, Some(&saved))?;
-    view.status = r.status;
+    view.status = r.status.as_str().into();
     Ok(view)
 }
 fn stage_parent(i: &Install) -> Result<Directory, AppError> {
