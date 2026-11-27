@@ -12,7 +12,7 @@ Policy: docs/adr/0001-no-code-comments.md. The gate is
 `python3 scripts/check-comments.py --list` prints every counted comment with its
 `file:line`, including Python docstrings. Read each one together with the code
 it sits on. The tool skips shebangs, `noqa`/`type: ignore`/`shellcheck`
-directives and SHA-pin `# vX` tags.
+directives, SHA-pin `# vX` tags and `// SAFETY:` blocks.
 
 ## 2. Classify each comment
 - **Tautology**: says what the code, a name or a test assertion already says.
@@ -35,9 +35,8 @@ from doc comments. Argparse docs become a `DESCRIPTION` constant. Capture
 every `--help` output before the change and `diff -r` it afterwards. It must
 be identical.
 
-`// SAFETY:` blocks are the open baseline in ADR 0001. Remove one only by
-wrapping the unsafe call in a safe function that carries the invariant, or
-after Keith decides on an exemption.
+`// SAFETY:` blocks directly above `unsafe` are allowed (ADR 0001) and
+aren't counted. Leave them alone unless they no longer match the call.
 
 ## 3. Delete
 Delete whole comment lines. For a trailing comment, delete the comment and the

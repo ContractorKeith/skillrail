@@ -18,19 +18,19 @@ pattern of an excused hack into new code.
 - Not counted (machine-read, not prose): a shebang on line 1, `# noqa`,
   `# type: ignore`, `# shellcheck` directives, and the `# vX.Y.Z` tag after a
   SHA-pinned GitHub Action (Dependabot reads it).
+- `// SAFETY:` is the one sanctioned prose comment. It must sit directly above
+  an `unsafe` block, and it covers only the comment lines immediately after
+  it. Each one proves the invariants at a single call site, which an ADR
+  can't do. Keith approved this on 2026-11-27.
 - `scripts/check-comments.py` enforces a per-file ratchet against
   `scripts/comment-baseline.json`. A file may never gain comments. When a file
   loses comments, `python3 scripts/check-comments.py --update` lowers its
   baseline, and the gate fails until that happens. `--update` never raises a
   count. `scripts/accept.sh` runs the ratchet first.
 
-## Remaining baseline
-The 27 `// SAFETY:` comments on `unsafe` FFI calls in `src/guarded_fs.rs`,
-`src/install_source/git.rs` and `tests/mutations.rs` stay for now. Each one
-proves the invariants at a single call site, so an ADR can't replace it.
-They're the open question for the next pass: either wrap each call in a small
-safe function whose name and types carry the invariant, or make `SAFETY:` the
-one sanctioned exemption.
+## Baseline
+After the first audit the baseline is empty: `scripts/comment-baseline.json`
+is `{}`, so any new non-exempt comment fails the gate.
 
 ## Consequences
 Reasons for code are found in `docs/adr/`, not next to the code. Run

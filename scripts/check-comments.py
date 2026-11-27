@@ -10,7 +10,7 @@ import tokenize
 from pathlib import Path
 
 DESCRIPTION = (
-    "Comment ratchet (docs/adr/0001-no-code-comments.md). Fails when a file has more "
+    "Comment ratchet (docs/adr/0001-no-code-comments.md); SAFETY blocks are exempt. Fails when a file has more "
     "comments than scripts/comment-baseline.json allows, or fewer without --update."
 )
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +19,7 @@ SUFFIXES = (".rs", ".py", ".sh", ".yml", ".yaml", ".toml")
 DIRECTIVE = re.compile(r"#\s*(noqa|type:\s*ignore|shellcheck)\b")
 ACTION_PIN = re.compile(r"uses: \S+@[0-9a-f]{40} # v[0-9][\w.-]*\s*$")
 RAW_STRING = re.compile(r'(?<![\w])b?r(#*)"')
+SAFETY = "// SAFETY:"
 
 
 def rust_comments(src):
@@ -53,7 +54,19 @@ def rust_comments(src):
             i = src.index("'", i + 3 if src[i + 1] == "\\" else i + 2) + 1
         else:
             i += 1
-    return found
+    return without_safety(found, src.splitlines())
+
+
+def without_safety(found, lines):
+    kept, previous = [], None
+    for line, text in found:
+        continues = previous is not None and line == previous + 1 and lines[line - 1].lstrip().startswith("//")
+        if text.startswith(SAFETY) or continues:
+            previous = line
+            continue
+        previous = None
+        kept.append((line, text))
+    return kept
 
 
 def python_comments(src):

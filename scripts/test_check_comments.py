@@ -13,6 +13,10 @@ class Counting(unittest.TestCase):
         src = 'let a = "http://x"; // one\nlet b = r#"// no"#;\nlet c = \'/\';\n/* two */\nlet d = br"//";\n'
         self.assertEqual([line for line, _ in check.comments("x.rs", src)], [1, 4])
 
+    def test_rust_safety_blocks_are_exempt(self):
+        src = "// SAFETY: one\n// continued\nunsafe { f() }; // counted\n// counted\n"
+        self.assertEqual([line for line, _ in check.comments("x.rs", src)], [3, 4])
+
     def test_python_counts_docstrings_and_skips_directives(self):
         src = '#!/usr/bin/env python3\n"""doc"""\nimport x  # noqa: E402\ny = "# not"  # yes\n'
         self.assertEqual(len(check.comments("x.py", src)), 2)
